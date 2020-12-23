@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -29,7 +29,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 
-import loci.common.DataTools;
 import loci.common.Location;
 import loci.common.RandomAccessInputStream;
 import loci.formats.CoreMetadata;
@@ -41,7 +40,6 @@ import loci.formats.tiff.IFD;
 import loci.formats.tiff.TiffParser;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
-import ome.xml.model.primitives.PositiveFloat;
 
 /**
  */
@@ -191,7 +189,7 @@ public class SlidebookTiffReader extends BaseTiffReader {
 
     readers = new MinimalTiffReader[files.length];
 
-    CoreMetadata m = core.get(0);
+    CoreMetadata m = core.get(0, 0);
 
     m.imageCount = ifds.size() * files.length;
     m.sizeT = ifds.size();
@@ -226,11 +224,11 @@ public class SlidebookTiffReader extends BaseTiffReader {
         if (c < channelNames.size()) {
           String name = channelNames.get(c);
           if (name != null) {
-            if (name.indexOf(":") > 0) {
-              name = name.substring(name.indexOf(":") + 1);
+            if (name.indexOf(':') > 0) {
+              name = name.substring(name.indexOf(':') + 1);
             }
-            if (name.indexOf(";") > 0) {
-              name = name.substring(0, name.indexOf(";"));
+            if (name.indexOf(';') > 0) {
+              name = name.substring(0, name.indexOf(';'));
             }
 
             store.setChannelName(name.trim(), 0, c);
@@ -252,8 +250,8 @@ public class SlidebookTiffReader extends BaseTiffReader {
       if (mag != null) {
         store.setInstrumentID(MetadataTools.createLSID("Instrument", 0), 0);
         store.setObjectiveID(MetadataTools.createLSID("Objective", 0, 0), 0, 0);
-        store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
-        store.setObjectiveImmersion(getImmersion("Other"), 0, 0);
+        store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
+        store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, 0);
         store.setObjectiveNominalMagnification(new Double(mag), 0, 0);
       }
 
@@ -276,11 +274,12 @@ public class SlidebookTiffReader extends BaseTiffReader {
   // -- Helper methods --
 
   private String getTimestamp(String path) throws FormatException, IOException {
-    RandomAccessInputStream s = new RandomAccessInputStream(path);
-    TiffParser parser = new TiffParser(s);
-    IFD ifd = parser.getFirstIFD();
-    Object date = ifd.getIFDValue(IFD.DATE_TIME);
-    s.close();
+    Object date = null;
+    try (RandomAccessInputStream s = new RandomAccessInputStream(path)) {
+        TiffParser parser = new TiffParser(s);
+        IFD ifd = parser.getFirstIFD();
+        date = ifd.getIFDValue(IFD.DATE_TIME);
+    }
 
     return date == null ? null : date.toString();
   }
@@ -288,12 +287,12 @@ public class SlidebookTiffReader extends BaseTiffReader {
   private String getFirstChannel(String path)
     throws FormatException, IOException
   {
-    RandomAccessInputStream s = new RandomAccessInputStream(path);
-    TiffParser parser = new TiffParser(s);
-    IFD ifd = parser.getFirstIFD();
-    Object channel = ifd.getIFDValue(CHANNEL_TAG);
-    s.close();
-    parser.getStream().close();
+    Object channel = null;
+    try (RandomAccessInputStream s = new RandomAccessInputStream(path)) {
+      TiffParser parser = new TiffParser(s);
+      IFD ifd = parser.getFirstIFD();
+      channel = ifd.getIFDValue(CHANNEL_TAG);
+    }
 
     return channel == null ? null : channel.toString();
   }

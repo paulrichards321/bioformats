@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -38,7 +38,6 @@ import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
 import loci.formats.tiff.TiffRational;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 import ome.units.quantity.Length;
 
@@ -122,7 +121,7 @@ public class GelReader extends BaseTiffReader {
       int originalBytes = ifd.getBitsPerSample()[0] / 8;
 
       for (int i=0; i<tmp.length/4; i++) {
-        long value = DataTools.bytesToShort(tmp, i*originalBytes,
+        long value = DataTools.bytesToInt(tmp, i*originalBytes,
           originalBytes, isLittleEndian());
         long square = value * value;
         float pixel = square * scale;
@@ -140,7 +139,7 @@ public class GelReader extends BaseTiffReader {
   /* @see BaseTiffReader#initMetadata() */
   @Override
   protected void initMetadata() throws FormatException, IOException {
-    ifds = tiffParser.getIFDs();
+    ifds = tiffParser.getMainIFDs();
     if (ifds.size() > 1) {
       IFDList tmpIFDs = ifds;
       ifds = new IFDList();
@@ -153,19 +152,19 @@ public class GelReader extends BaseTiffReader {
       }
     }
 
-    super.initStandardMetadata();
-
     IFD firstIFD = ifds.get(0);
     tiffParser.fillInIFD(firstIFD);
 
+    super.initStandardMetadata();
+
     fmt = firstIFD.getIFDLongValue(MD_FILETAG, LINEAR);
-    if (fmt == SQUARE_ROOT) core.get(0).pixelType = FormatTools.FLOAT;
+    if (fmt == SQUARE_ROOT) core.get(0, 0).pixelType = FormatTools.FLOAT;
 
     TiffRational scale = (TiffRational) firstIFD.getIFDValue(MD_SCALE_PIXEL);
     if (scale == null) scale = new TiffRational(1, 1);
 
-    core.get(0).imageCount = ifds.size();
-    core.get(0).sizeT = getImageCount();
+    core.get(0, 0).imageCount = ifds.size();
+    core.get(0, 0).sizeT = getImageCount();
 
     // ignore MD_COLOR_TABLE
 

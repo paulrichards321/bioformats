@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -26,6 +26,10 @@
 package loci.formats.in;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.util.ArrayList;
 
 import loci.common.DateTools;
 import loci.common.RandomAccessInputStream;
@@ -36,10 +40,7 @@ import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.TiffParser;
-import loci.formats.tiff.TiffRational;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
-
 import ome.units.quantity.ElectricPotential;
 import ome.units.quantity.Frequency;
 import ome.units.quantity.Length;
@@ -92,7 +93,7 @@ public class FluoviewReader extends BaseTiffReader {
   private static final int BASELINE_OFFSET = 4944;
 
   /** Date format */
-  private static final String DATE_FORMAT = "MM/dd/yyyy HH:mm:ss.SSS";
+  private static final String DATE_FORMAT = "dd/MM/yyyy HH:mm:ss.SSS";
 
   // -- Fields --
 
@@ -107,7 +108,8 @@ public class FluoviewReader extends BaseTiffReader {
 
   /** Timestamps for each plane, in seconds. */
   private double[][] stamps = null;
-
+  private double[] zPositions = null;
+  
   // hardware settings
   private String[] gains, voltages, offsets, channelNames, lensNA;
   private String mag, detectorManufacturer, objectiveManufacturer, comment;
@@ -210,81 +212,79 @@ public class FluoviewReader extends BaseTiffReader {
       return;
     }
     byte[] mmheader = shortArrayToBytes(s);
-
-    RandomAccessInputStream ras = new RandomAccessInputStream(mmheader);
-    ras.order(isLittleEndian());
-
-    if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
-      put("Header Flag", ras.readShort());
-      put("Image Type", ras.read());
-
-      String name = ras.readString(257);
-      name = name.substring(0, name.indexOf("\0"));
-      put("Image name", name);
-
-      ras.skipBytes(4); // skip pointer to data field
-
-      put("Number of colors", ras.readInt());
-      ras.skipBytes(4); // skip pointer to palette field
-      ras.skipBytes(4); // skip pointer to other palette field
-
-      put("Comment size", ras.readInt());
-      ras.skipBytes(4); // skip pointer to comment field
-    }
-    else ras.skipBytes(284);
-
     // read dimension information
     String[] names = new String[10];
     int[] sizes = new int[10];
     double[] resolutions = new double[10];
-    for (int i=0; i<10; i++) {
-      names[i] = ras.readString(16);
-      sizes[i] = ras.readInt();
-      double origin = ras.readDouble();
-      resolutions[i] = ras.readDouble();
+    try (RandomAccessInputStream ras = new RandomAccessInputStream(mmheader)) {
+      ras.order(isLittleEndian());
+      if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
+        put("Header Flag", ras.readShort());
+        put("Image Type", ras.read());
 
-      put("Dimension " + (i + 1) + " Name", names[i]);
-      put("Dimension " + (i + 1) + " Size", sizes[i]);
-      put("Dimension " + (i + 1) + " Origin", origin);
-      put("Dimension " + (i + 1) + " Resolution", resolutions[i]);
-      put("Dimension " + (i + 1) + " Units", ras.readString(64));
+        String name = ras.readString(257);
+        name = name.substring(0, name.indexOf("\0"));
+        put("Image name", name);
+
+        ras.skipBytes(4); // skip pointer to data field
+
+        put("Number of colors", ras.readInt());
+        ras.skipBytes(4); // skip pointer to palette field
+        ras.skipBytes(4); // skip pointer to other palette field
+
+        put("Comment size", ras.readInt());
+        ras.skipBytes(4); // skip pointer to comment field
+      }
+      else ras.skipBytes(284);
+
+      for (int i=0; i<10; i++) {
+        names[i] = ras.readString(16);
+        sizes[i] = ras.readInt();
+        double origin = ras.readDouble();
+        resolutions[i] = ras.readDouble();
+
+        put("Dimension " + (i + 1) + " Name", names[i]);
+        put("Dimension " + (i + 1) + " Size", sizes[i]);
+        put("Dimension " + (i + 1) + " Origin", origin);
+        put("Dimension " + (i + 1) + " Resolution", resolutions[i]);
+        put("Dimension " + (i + 1) + " Units", ras.readString(64));
+      }
+
+      if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
+        ras.skipBytes(4); // skip pointer to spatial position data
+
+        put("Map type", ras.readShort());
+        put("Map min", ras.readDouble());
+        put("Map max", ras.readDouble());
+        put("Min value", ras.readDouble());
+        put("Max value", ras.readDouble());
+
+        ras.skipBytes(4); // skip pointer to map data
+
+        put("Gamma", ras.readDouble());
+        put("Offset", ras.readDouble());
+
+        // read gray channel data
+        put("Gray Channel Name", ras.readString(16));
+        put("Gray Channel Size", ras.readInt());
+        put("Gray Channel Origin", ras.readDouble());
+        put("Gray Channel Resolution", ras.readDouble());
+        put("Gray Channel Units", ras.readString(64));
+
+        ras.skipBytes(4); // skip pointer to thumbnail data
+
+        put("Voice field", ras.readInt());
+        ras.skipBytes(4); // skip pointer to voice field
+
+        // now we need to read the MMSTAMP data to determine dimension order
+
+        readStamps();
+      }
     }
-
-    if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
-      ras.skipBytes(4); // skip pointer to spatial position data
-
-      put("Map type", ras.readShort());
-      put("Map min", ras.readDouble());
-      put("Map max", ras.readDouble());
-      put("Min value", ras.readDouble());
-      put("Max value", ras.readDouble());
-
-      ras.skipBytes(4); // skip pointer to map data
-
-      put("Gamma", ras.readDouble());
-      put("Offset", ras.readDouble());
-
-      // read gray channel data
-      put("Gray Channel Name", ras.readString(16));
-      put("Gray Channel Size", ras.readInt());
-      put("Gray Channel Origin", ras.readDouble());
-      put("Gray Channel Resolution", ras.readDouble());
-      put("Gray Channel Units", ras.readString(64));
-
-      ras.skipBytes(4); // skip pointer to thumbnail data
-
-      put("Voice field", ras.readInt());
-      ras.skipBytes(4); // skip pointer to voice field
-
-      // now we need to read the MMSTAMP data to determine dimension order
-
-      readStamps();
-    }
-    ras.close();
 
     // calculate the dimension order and axis sizes
 
-    CoreMetadata m = core.get(0);
+    CoreMetadata m = core.get(0, 0);
 
     dimensionOrder = "XY";
     int seriesCount = 1;
@@ -304,17 +304,50 @@ public class FluoviewReader extends BaseTiffReader {
       else if (name.equals("y")) {
         voxelY = voxel;
       }
-      else if (name.equals("z") || name.equals("event")) {
+      else if (name.equals("event")) {
         m.sizeZ *= size;
-        if (dimensionOrder.indexOf("Z") == -1) {
-          dimensionOrder += "Z";
+        if (dimensionOrder.indexOf('Z') == -1) {
+          dimensionOrder += 'Z';
         }
-        voxelZ = voxel;
+        if (Double.compare(voxelZ, 1) == 0) {
+          voxelZ = voxel;
+        }
+      }
+      else if (name.equals("z")) {
+        m.sizeZ *= size;
+        if (dimensionOrder.indexOf('Z') == -1) {
+          dimensionOrder += 'Z';
+        }
+        
+        ArrayList<Double> uniqueZ = new ArrayList<Double>();
+        if (i > 1 && stamps != null) {
+          zPositions = stamps[i - 2];
+          if (zPositions != null) {
+            for (Double z : zPositions) {
+              BigDecimal bd = new BigDecimal(z);
+              bd = bd.setScale(10, RoundingMode.HALF_UP);
+              if (!uniqueZ.contains(bd.doubleValue())) uniqueZ.add(bd.doubleValue());
+            }
+          }
+        }
+        if (uniqueZ.size() > 1 && uniqueZ.size() == size) {
+          BigDecimal lastZ = BigDecimal.valueOf(uniqueZ.get(uniqueZ.size() - 1));
+          BigDecimal firstZ = BigDecimal.valueOf(uniqueZ.get(0));
+          BigDecimal zRange = (lastZ.subtract(firstZ)).abs();
+          BigDecimal zSize = BigDecimal.valueOf((double)(getSizeZ() - 1));
+          MathContext mc = new MathContext(10, RoundingMode.HALF_UP);
+          voxelZ = zRange.divide(zSize, mc).doubleValue();
+          // Need to convert from millimetre to micrometre
+          voxelZ *= Math.pow(10, 3);
+        }
+        else {
+          voxelZ = voxel;
+        }
       }
       else if (name.equals("ch") || name.equals("wavelength")) {
         m.sizeC *= size;
-        if (dimensionOrder.indexOf("C") == -1) {
-          dimensionOrder += "C";
+        if (dimensionOrder.indexOf('C') == -1) {
+          dimensionOrder += 'C';
         }
         voxelC = voxel;
       }
@@ -322,14 +355,14 @@ public class FluoviewReader extends BaseTiffReader {
         name.equals("animation"))
       {
         m.sizeT *= size;
-        if (dimensionOrder.indexOf("T") == -1) {
-          dimensionOrder += "T";
+        if (dimensionOrder.indexOf('T') == -1) {
+          dimensionOrder += 'T';
         }
         voxelT = voxel;
         timeIndex = i - 2;
       }
       else {
-        if (dimensionOrder.indexOf("S") == -1) dimensionOrder += "S";
+        if (dimensionOrder.indexOf('S') == -1) dimensionOrder += 'S';
         seriesCount *= size;
 
         if (name.equals("montage")) montageIndex = i - 2;
@@ -337,10 +370,10 @@ public class FluoviewReader extends BaseTiffReader {
       }
     }
 
-    if (dimensionOrder.indexOf("Z") == -1) dimensionOrder += "Z";
-    if (dimensionOrder.indexOf("T") == -1) dimensionOrder += "T";
-    if (dimensionOrder.indexOf("C") == -1) dimensionOrder += "C";
-    if (dimensionOrder.indexOf("S") == -1) dimensionOrder += "S";
+    if (dimensionOrder.indexOf('Z') == -1) dimensionOrder += 'Z';
+    if (dimensionOrder.indexOf('T') == -1) dimensionOrder += 'T';
+    if (dimensionOrder.indexOf('C') == -1) dimensionOrder += 'C';
+    if (dimensionOrder.indexOf('S') == -1) dimensionOrder += 'S';
 
     m.imageCount = ifds.size() / seriesCount;
     if (getSizeZ() > getImageCount()) m.sizeZ = getImageCount();
@@ -423,7 +456,7 @@ public class FluoviewReader extends BaseTiffReader {
         setSeries(s);
         for (int i=0; i<getImageCount(); i++) {
           int index = getImageIndex(i);
-          store.setPlaneDeltaT(new Time(stamps[timeIndex][index], UNITS.S), s, i);
+          store.setPlaneDeltaT(new Time(stamps[timeIndex][index], UNITS.SECOND), s, i);
         }
       }
       setSeries(0);
@@ -443,7 +476,7 @@ public class FluoviewReader extends BaseTiffReader {
       if (sizeZ != null) {
         store.setPixelsPhysicalSizeZ(sizeZ, i);
       }
-      store.setPixelsTimeIncrement(new Time(voxelT, UNITS.S), i);
+      store.setPixelsTimeIncrement(new Time(voxelT, UNITS.SECOND), i);
 
       int montage = getMontage(i);
       int field = getField(i);
@@ -476,7 +509,10 @@ public class FluoviewReader extends BaseTiffReader {
       for (int image=0; image<getImageCount(); image++) {
         final Length xl = new Length(posX, UNITS.REFERENCEFRAME);
         final Length yl = new Length(posY, UNITS.REFERENCEFRAME);
-        final Length zl = new Length(posZ, UNITS.REFERENCEFRAME);
+        Length zl = new Length(posZ, UNITS.REFERENCEFRAME);
+        if (zPositions != null && zPositions.length > image) {
+          zl = new Length(zPositions[image], UNITS.MICROMETER);
+        }
         store.setPlanePositionX(xl, i, image);
         store.setPlanePositionY(yl, i, image);
         store.setPlanePositionZ(zl, i, image);
@@ -498,7 +534,7 @@ public class FluoviewReader extends BaseTiffReader {
     for (int i=0; i<getSizeC(); i++) {
       if (voltages != null && voltages[i] != null) {
         store.setDetectorSettingsVoltage(
-                new ElectricPotential(new Double(voltages[i]), UNITS.V), 0, i);
+                new ElectricPotential(new Double(voltages[i]), UNITS.VOLT), 0, i);
       }
       if (gains != null && gains[i] != null) {
         store.setDetectorSettingsGain(new Double(gains[i]), 0, i);
@@ -506,7 +542,7 @@ public class FluoviewReader extends BaseTiffReader {
       if (offsets != null && offsets[i] != null) {
         store.setDetectorSettingsOffset(new Double(offsets[i]), 0, i);
       }
-      store.setDetectorType(getDetectorType("Other"), 0, i);
+      store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, i);
       if (detectorManufacturer != null) {
         store.setDetectorManufacturer(detectorManufacturer, 0, i);
       }
@@ -524,14 +560,14 @@ public class FluoviewReader extends BaseTiffReader {
     }
     else if (mag == null) mag = "1";
 
-    store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
-    store.setObjectiveImmersion(getImmersion("Other"), 0, 0);
+    store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
+    store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, 0);
 
     if (objectiveManufacturer != null) {
       String[] objectiveData = objectiveManufacturer.split(" ");
       store.setObjectiveModel(objectiveData[0], 0, 0);
       if (objectiveData.length > 2) {
-        store.setObjectiveImmersion(getImmersion(objectiveData[2]), 0, 0);
+        store.setObjectiveImmersion(MetadataTools.getImmersion(objectiveData[2]), 0, 0);
       }
     }
 
@@ -613,7 +649,7 @@ public class FluoviewReader extends BaseTiffReader {
   private void initAlternateMetadataStore() throws FormatException {
     MetadataStore store = makeFilterMetadata();
     store.setImagingEnvironmentTemperature(
-      new Temperature(new Double(temperature.floatValue()), UNITS.DEGREEC), 0);
+      new Temperature(new Double(temperature.floatValue()), UNITS.CELSIUS), 0);
 
     String instrumentID = MetadataTools.createLSID("Instrument", 0);
     String detectorID = MetadataTools.createLSID("Detector", 0, 0);
@@ -625,14 +661,14 @@ public class FluoviewReader extends BaseTiffReader {
 
     if (exposureTime != null) {
       for (int i=0; i<getImageCount(); i++) {
-        store.setPlaneExposureTime(new Time(new Double(exposureTime.floatValue()), UNITS.S), 0, i);
+        store.setPlaneExposureTime(new Time(new Double(exposureTime.floatValue()), UNITS.SECOND), 0, i);
       }
     }
 
     for (int i=0; i<getEffectiveSizeC(); i++) {
       store.setDetectorSettingsID(detectorID, 0, i);
       store.setDetectorSettingsReadOutRate(
-        new Frequency(new Double(readoutTime.floatValue()), UNITS.HZ), 0, i);
+        new Frequency(new Double(readoutTime.floatValue()), UNITS.HERTZ), 0, i);
     }
   }
 
@@ -670,14 +706,14 @@ public class FluoviewReader extends BaseTiffReader {
     stamps = new double[8][ifds.size()];
     for (int i=0; i<ifds.size(); i++) {
       byte[] stamp = shortArrayToBytes(ifds.get(i).getIFDShortArray(MMSTAMP));
-      RandomAccessInputStream ras = new RandomAccessInputStream(stamp);
-      ras.order(isLittleEndian());
+      try (RandomAccessInputStream ras = new RandomAccessInputStream(stamp)) {
+        ras.order(isLittleEndian());
 
-      // each stamp is 8 doubles, representing the position on dimensions 3-10
-      for (int j=0; j<8; j++) {
-        stamps[j][i] = ras.readDouble() / 1000;
+        // each stamp is 8 doubles, representing the position on dimensions 3-10
+        for (int j=0; j<8; j++) {
+          stamps[j][i] = ras.readDouble() / 1000;
+        }
       }
-      ras.close();
     }
   }
 
@@ -715,7 +751,7 @@ public class FluoviewReader extends BaseTiffReader {
       String[] lines = comment.split("\n");
       for (String token : lines) {
         token = token.trim();
-        int eq = token.indexOf("=");
+        int eq = token.indexOf('=');
         if (eq != -1) {
           String key = token.substring(0, eq);
           String value = token.substring(eq + 1);
@@ -789,9 +825,9 @@ public class FluoviewReader extends BaseTiffReader {
         }
         else if (token.startsWith("Z") && token.indexOf(" um ") != -1) {
           // looking for "Z - x um in y planes"
-          String z = token.substring(token.indexOf("-") + 1);
+          String z = token.substring(token.indexOf('-') + 1);
           z = z.replaceAll("\\p{Alpha}", "").trim();
-          int firstSpace = z.indexOf(" ");
+          int firstSpace = z.indexOf(' ');
           double size = Double.parseDouble(z.substring(0, firstSpace));
           double nPlanes = Double.parseDouble(z.substring(firstSpace).trim());
           voxelZ = size / nPlanes;
@@ -799,11 +835,10 @@ public class FluoviewReader extends BaseTiffReader {
       }
       if (date != null) {
         date = DateTools.formatDate(date.trim(),
-          new String[] {"MM/dd/yyyy hh:mm:ss a", "MM-dd-yyyy hh:mm:ss","MM/dd/yyyy H:mm:ss"}, true);
+          new String[] {"dd/MM/yyyy hh:mm:ss a", "MM-dd-yyyy hh:mm:ss","dd/MM/yyyy H:mm:ss"}, true);
         Timestamp timestamp = Timestamp.valueOf(date);
         if (timeIndex >= 0 && timestamp != null) {
           long ms = timestamp.asInstant().getMillis();
-          int nChars = String.valueOf(getImageCount()).length();
           for (int i=0; i<getImageCount(); i++) {
             int[] zct = getZCTCoords(i);
             String key = String.format(
@@ -819,7 +854,7 @@ public class FluoviewReader extends BaseTiffReader {
       int end = comment.indexOf("[Version Info End]");
       if (start != -1 && end != -1 && end > start) {
         comment = comment.substring(start + 14, end).trim();
-        start = comment.indexOf("=") + 1;
+        start = comment.indexOf('=') + 1;
         end = comment.indexOf("\n");
         if (end > start) comment = comment.substring(start, end).trim();
         else comment = comment.substring(start).trim();

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -76,20 +76,11 @@ public class JEOLReader extends FormatReader {
       return true;
     }
     if (checkSuffix(name, "dat") && open) {
-      RandomAccessInputStream stream = null;
-      try {
-        stream = new RandomAccessInputStream(name);
+      try (RandomAccessInputStream stream = new RandomAccessInputStream(name)) {
         if (stream.length() == (1024 * 1024)) return true;
       }
       catch (IOException e) { }
-      finally {
-        if (stream != null) {
-          try {
-            stream.close();
-          }
-          catch (IOException e) { }
-        }
-      }
+      
       return false;
     }
     return super.isThisType(name, open);

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -31,8 +31,10 @@ import java.text.NumberFormat;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import loci.common.Constants;
+import loci.common.DataTools;
 import loci.common.RandomAccessInputStream;
 import loci.formats.CoreMetadata;
 import loci.formats.FormatException;
@@ -44,6 +46,8 @@ import ome.units.quantity.ElectricPotential;
 import ome.units.quantity.Length;
 import ome.units.quantity.Time;
 import ome.units.UNITS;
+import ome.units.unit.Unit;
+import ome.xml.model.primitives.Color;
 
 /**
  * GatanReader is the file format reader for Gatan files.
@@ -75,6 +79,15 @@ public class GatanReader extends FormatReader {
   private static final int UNKNOWN = 11;
   private static final int UNKNOWN2 = 12;
 
+  /** Shape types */
+  private static final int LINE = 2;
+  private static final int RECTANGLE = 5;
+  private static final int ELLIPSE = 6;
+  private static final int TEXT = 13;
+
+  public static final String SPLIT_MONTAGE = "gatan.split_montage";
+  public static final boolean SPLIT_MONTAGE_DEFAULT = true;
+
   // -- Fields --
 
   /** Offset to pixel data. */
@@ -84,10 +97,7 @@ public class GatanReader extends FormatReader {
   private List<Double> pixelSizes;
   private List<String> units;
 
-  private int bytesPerPixel;
-
-  private int pixelDataNum = 0;
-  private int numPixelBytes;
+  private long numPixelBytes;
 
   private boolean signed;
   private long timestamp;
@@ -100,11 +110,18 @@ public class GatanReader extends FormatReader {
   private boolean adjustEndianness = true;
   private int version;
 
+  private transient List<ROIShape> shapes;
+
+  private transient boolean foundMontage = false;
+  private transient List<Length> stageX = new ArrayList<Length>();
+  private transient List<Length> stageY = new ArrayList<Length>();
+  private transient List<Length> stageZ = new ArrayList<Length>();
+
   // -- Constructor --
 
   /** Constructs a new Gatan reader. */
   public GatanReader() {
-    super("Gatan Digital Micrograph", "dm3");
+    super("Gatan Digital Micrograph", new String[] {"dm3", "dm4"});
     domains = new String[] {FormatTools.EM_DOMAIN};
     suffixNecessary = false;
   }
@@ -129,7 +146,10 @@ public class GatanReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
-    in.seek(pixelOffset);
+    int planeIndex = getSeries() * getImageCount() + no;
+
+    long planeOffset = (long) planeIndex * FormatTools.getPlaneSize(this);
+    in.seek(pixelOffset + planeOffset);
     readPlane(in, x, y, w, h, buf);
     return buf;
   }
@@ -140,7 +160,7 @@ public class GatanReader extends FormatReader {
     super.close(fileOnly);
     if (!fileOnly) {
       pixelOffset = 0;
-      bytesPerPixel = pixelDataNum = numPixelBytes = 0;
+      numPixelBytes = 0;
       pixelSizes = null;
       signed = false;
       timestamp = 0;
@@ -151,10 +171,23 @@ public class GatanReader extends FormatReader {
       posX = posY = posZ = null;
       sampleTime = 0;
       units = null;
+      shapes = null;
+      foundMontage = false;
+      stageX.clear();
+      stageY.clear();
+      stageZ.clear();
     }
   }
 
   // -- Internal FormatReader API methods --
+
+  /* @see loci.formats.FormatReader#initFile(String) */
+  @Override
+  protected ArrayList<String> getAvailableOptions() {
+    ArrayList<String> optionsList = super.getAvailableOptions();
+    optionsList.add(SPLIT_MONTAGE);
+    return optionsList;
+  }
 
   /* @see loci.formats.FormatReader#initFile(String) */
   @Override
@@ -169,6 +202,7 @@ public class GatanReader extends FormatReader {
     m.littleEndian = false;
     pixelSizes = new ArrayList<Double>();
     units = new ArrayList<String>();
+    shapes = new ArrayList<ROIShape>();
 
     in.order(isLittleEndian());
 
@@ -210,21 +244,36 @@ public class GatanReader extends FormatReader {
     if (getSizeX() == 0 || getSizeY() == 0) {
       throw new FormatException("Dimensions information not found");
     }
-    int bytes = numPixelBytes / (getSizeX() * getSizeY());
 
-    if (bytes != FormatTools.getBytesPerPixel(getPixelType())) {
-      m.pixelType = FormatTools.pixelTypeFromBytes(bytes, signed, false);
+    if (m.sizeZ == 0) {
+      m.sizeZ = 1;
     }
-    m.sizeZ = 1;
     m.sizeC = 1;
     m.sizeT = 1;
     m.dimensionOrder = "XYZTC";
-    m.imageCount = 1;
+    m.imageCount = getSizeZ() * getSizeC() * getSizeT();
+
+    int bytes = (int) (numPixelBytes / (getSizeX() * getSizeY() * (long) getImageCount()));
+    if (bytes != FormatTools.getBytesPerPixel(getPixelType())) {
+      m.pixelType = FormatTools.pixelTypeFromBytes(bytes, signed, false);
+    }
+
     m.rgb = false;
     m.interleaved = false;
     m.metadataComplete = true;
     m.indexed = false;
     m.falseColor = false;
+
+    if (foundMontage && splitMontage() && stageX.size() > 1) {
+      if (m.sizeZ > 1) {
+        m.sizeZ /= stageX.size();
+        m.imageCount = getSizeZ() * getSizeC() * getSizeT();
+
+        for (int i=1; i<stageX.size(); i++) {
+          core.add(new CoreMetadata(core.get(0)));
+        }
+      }
+    }
 
     // The metadata store we're working with.
     MetadataStore store = makeFilterMetadata();
@@ -232,13 +281,17 @@ public class GatanReader extends FormatReader {
 
     if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
       int index = 0;
-      if (pixelSizes.size() >= 3) {
+      if (pixelSizes.size() > 4) {
         index = pixelSizes.size() - 3;
       }
-      else if (pixelSizes.size() >= 2) {
-        index = pixelSizes.size() - 2;
+      else if (pixelSizes.size() == 4) {
+        if (Math.abs(pixelSizes.get(0) - 1.0) < Constants.EPSILON) {
+          index = pixelSizes.size() - 2;
+        }
       }
-      if (Math.abs(pixelSizes.get(index + 1) - pixelSizes.get(index + 2)) < Constants.EPSILON) {
+      if (index + 2 < pixelSizes.size() &&
+        Math.abs(pixelSizes.get(index + 1) - pixelSizes.get(index + 2)) < Constants.EPSILON)
+      {
         if (Math.abs(pixelSizes.get(index) - pixelSizes.get(index + 1)) > Constants.EPSILON &&
           getSizeY() > 1)
         {
@@ -251,63 +304,162 @@ public class GatanReader extends FormatReader {
         Double y = pixelSizes.get(index + 1);
         String xUnits = index < units.size() ? units.get(index) : "";
         String yUnits = index + 1 < units.size() ? units.get(index + 1) : "";
-        x = correctForUnits(x, xUnits);
-        y = correctForUnits(y, yUnits);
-        Length sizeX = FormatTools.getPhysicalSizeX(x);
-        Length sizeY = FormatTools.getPhysicalSizeY(y);
+        Length sizeX = FormatTools.getPhysicalSizeX(x, convertUnits(xUnits));
+        Length sizeY = FormatTools.getPhysicalSizeY(y, convertUnits(yUnits));
         if (sizeX != null) {
-          store.setPixelsPhysicalSizeX(sizeX, 0);
+          for (int i=0; i<getSeriesCount(); i++) {
+            store.setPixelsPhysicalSizeX(sizeX, i);
+          }
         }
         if (sizeY != null) {
-          store.setPixelsPhysicalSizeY(sizeY, 0);
+          for (int i=0; i<getSeriesCount(); i++) {
+            store.setPixelsPhysicalSizeY(sizeY, i);
+          }
         }
 
         if (index < pixelSizes.size() - 2) {
           Double z = pixelSizes.get(index + 2);
           String zUnits = index + 2 < units.size() ? units.get(index + 2) : "";
-          z = correctForUnits(z, zUnits);
-          Length sizeZ = FormatTools.getPhysicalSizeZ(z);
-
+          Length sizeZ = FormatTools.getPhysicalSizeZ(z, convertUnits(zUnits));
           if (sizeZ != null) {
-            store.setPixelsPhysicalSizeZ(sizeZ, 0);
+            for (int i=0; i<getSeriesCount(); i++) {
+              store.setPixelsPhysicalSizeZ(sizeZ, i);
+            }
           }
         }
       }
 
-      store.setInstrumentID(MetadataTools.createLSID("Instrument", 0), 0);
+      String instrument = MetadataTools.createLSID("Instrument", 0);
+      store.setInstrumentID(instrument, 0);
 
       String objective = MetadataTools.createLSID("Objective", 0, 0);
       store.setObjectiveID(objective, 0, 0);
-      store.setObjectiveCorrection(getCorrection("Unknown"), 0, 0);
-      store.setObjectiveImmersion(getImmersion("Unknown"), 0, 0);
+      store.setObjectiveCorrection(MetadataTools.getCorrection("Unknown"), 0, 0);
+      store.setObjectiveImmersion(MetadataTools.getImmersion("Unknown"), 0, 0);
       store.setObjectiveNominalMagnification(mag, 0, 0);
-
-      store.setObjectiveSettingsID(objective, 0);
 
       String detector = MetadataTools.createLSID("Detector", 0, 0);
       store.setDetectorID(detector, 0, 0);
 
-      store.setDetectorSettingsID(detector, 0, 0);
-      store.setDetectorSettingsVoltage(new ElectricPotential(voltage, UNITS.V),
-              0, 0);
-
+      String mode = null;
       if (info == null) info = "";
       String[] scopeInfo = info.split("\\(");
       for (String token : scopeInfo) {
         token = token.trim();
         if (token.startsWith("Mode")) {
-          token = token.substring(token.indexOf(" ")).trim();
-          String mode = token.substring(0, token.indexOf(" ")).trim();
+          token = token.substring(token.indexOf(' ')).trim();
+          mode = token.substring(0, token.indexOf(' ')).trim();
           if (mode.equals("TEM")) mode = "Other";
-          store.setChannelAcquisitionMode(getAcquisitionMode(mode), 0, 0);
         }
       }
 
-      store.setPlanePositionX(posX, 0, 0);
-      store.setPlanePositionY(posY, 0, 0);
-      store.setPlanePositionZ(posZ, 0, 0);
-      store.setPlaneExposureTime(new Time(sampleTime, UNITS.S), 0, 0);
+      int digits = String.valueOf(getSeriesCount() + 1).length();
+      for (int i=0; i<getSeriesCount(); i++) {
+        if (foundMontage && getSeriesCount() > 1) {
+          store.setImageName(
+            String.format("Tile #%0" + digits + "d", i + 1), i);
+        }
+        store.setImageInstrumentRef(instrument, i);
+        store.setObjectiveSettingsID(objective, i);
+        store.setDetectorSettingsID(detector, i, 0);
+        store.setDetectorSettingsVoltage(new ElectricPotential(voltage, UNITS.VOLT),
+              i, 0);
+
+        if (mode != null) {
+          store.setChannelAcquisitionMode(
+            MetadataTools.getAcquisitionMode(mode), i, 0);
+        }
+
+        if (foundMontage && i < stageX.size()) {
+          store.setPlanePositionX(stageX.get(i), i, 0);
+          store.setPlanePositionY(stageY.get(i), i, 0);
+          store.setPlanePositionZ(stageZ.get(i), i, 0);
+        }
+        else {
+          store.setPlanePositionX(posX, i, 0);
+          store.setPlanePositionY(posY, i, 0);
+          store.setPlanePositionZ(posZ, i, 0);
+        }
+
+        for (int p=0; p<getImageCount(); p++) {
+          store.setPlaneExposureTime(new Time(sampleTime, UNITS.SECOND), i, p);
+        }
+      }
     }
+
+    if (getMetadataOptions().getMetadataLevel() != MetadataLevel.NO_OVERLAYS &&
+      shapes.size() > 0)
+    {
+      int nextROI = 0;
+      for (int i=0; i<shapes.size(); i++) {
+        ROIShape shape = shapes.get(i);
+        String shapeID = null;
+
+        switch (shape.type) {
+          case LINE:
+            shapeID = createROI(store, nextROI);
+            store.setLineID(shapeID, nextROI, 0);
+            store.setLineX1(shape.x1, nextROI, 0);
+            store.setLineY1(shape.y1, nextROI, 0);
+            store.setLineX2(shape.x2, nextROI, 0);
+            store.setLineY2(shape.y2, nextROI, 0);
+            store.setLineText(shape.text, nextROI, 0);
+            store.setLineFontSize(shape.fontSize, nextROI, 0);
+            store.setLineStrokeColor(shape.strokeColor, nextROI, 0);
+            nextROI++;
+            break;
+          case TEXT:
+            shapeID = createROI(store, nextROI);
+            store.setLabelID(shapeID, nextROI, 0);
+            store.setLabelX(shape.x1, nextROI, 0);
+            store.setLabelY(shape.y1, nextROI, 0);
+            store.setLabelText(shape.text, nextROI, 0);
+            store.setLabelFontSize(shape.fontSize, nextROI, 0);
+            store.setLabelStrokeColor(shape.strokeColor, nextROI, 0);
+            nextROI++;
+            break;
+          case ELLIPSE:
+            shapeID = createROI(store, nextROI);
+            store.setEllipseID(shapeID, nextROI, 0);
+
+            double radiusX = (shape.x2 - shape.x1) / 2;
+            double radiusY = (shape.y2 - shape.y1) / 2;
+
+            store.setEllipseX(shape.x1 + radiusX, nextROI, 0);
+            store.setEllipseY(shape.y1 + radiusY, nextROI, 0);
+            store.setEllipseRadiusX(radiusX, nextROI, 0);
+            store.setEllipseRadiusY(radiusY, nextROI, 0);
+            store.setEllipseText(shape.text, nextROI, 0);
+            store.setEllipseFontSize(shape.fontSize, nextROI, 0);
+            store.setEllipseStrokeColor(shape.strokeColor, nextROI, 0);
+            nextROI++;
+            break;
+          case RECTANGLE:
+            shapeID = createROI(store, nextROI);
+            store.setRectangleID(shapeID, nextROI, 0);
+            store.setRectangleX(shape.x1, nextROI, 0);
+            store.setRectangleY(shape.y1, nextROI, 0);
+            store.setRectangleWidth(shape.x2 - shape.x1, nextROI, 0);
+            store.setRectangleHeight(shape.y2 - shape.y1, nextROI, 0);
+            store.setRectangleText(shape.text, nextROI, 0);
+            store.setRectangleFontSize(shape.fontSize, nextROI, 0);
+            store.setRectangleStrokeColor(shape.strokeColor, nextROI, 0);
+            nextROI++;
+            break;
+          default:
+            LOGGER.warn("Unknown ROI type: {}", shape.type);
+        }
+      }
+    }
+  }
+
+  public boolean splitMontage() {
+    MetadataOptions options = getMetadataOptions();
+    if (options instanceof DynamicMetadataOptions) {
+      return ((DynamicMetadataOptions) options).getBoolean(
+          SPLIT_MONTAGE, SPLIT_MONTAGE_DEFAULT);
+    }
+    return SPLIT_MONTAGE_DEFAULT;
   }
 
   // -- Helper methods --
@@ -327,8 +479,11 @@ public class GatanReader extends FormatReader {
   private void parseTags(int numTags, String parent, String indent)
     throws FormatException, IOException, ParseException
   {
+    if ("Montage".equals(parent)) {
+      foundMontage = true;
+    }
     for (int i=0; i<numTags; i++) {
-      if (in.getFilePointer() >= in.length()) break;
+      if (in.getFilePointer() + 3 >= in.length()) break;
 
       byte type = in.readByte();  // can be 21 (data) or 20 (tag group)
       int length = in.readShort();
@@ -359,8 +514,13 @@ public class GatanReader extends FormatReader {
         if (n == 1) {
           if ("Dimensions".equals(parent) && labelString.length() == 0) {
             if (adjustEndianness) in.order(!in.isLittleEndian());
-            if (i == 0) core.get(0).sizeX = in.readInt();
+            if (i == 0) {
+              core.get(0).sizeX = in.readInt();
+            }
             else if (i == 1) core.get(0).sizeY = in.readInt();
+            else if (i == 2) {
+              core.get(0).sizeZ = in.readInt();
+            }
             if (adjustEndianness) in.order(!in.isLittleEndian());
           }
           else value = String.valueOf(readValue(dataType));
@@ -376,12 +536,20 @@ public class GatanReader extends FormatReader {
           if (dataType == GROUP) {  // this should always be true
             skipPadding();
             dataType = in.readInt();
-            skipPadding();
-            length = in.readInt();
+            long dataLength = 0;
+            if (version == 4) {
+              dataLength = in.readLong();
+            }
+            else {
+              dataLength = in.readInt();
+            }
+            length = (int) (dataLength & 0xffffffff);
             if (labelString.equals("Data")) {
-              pixelOffset = in.getFilePointer();
-              in.skipBytes(getNumBytes(dataType) * length);
-              numPixelBytes = (int) (in.getFilePointer() - pixelOffset);
+              if (dataLength > 0) {
+                pixelOffset = in.getFilePointer();
+                in.seek(in.getFilePointer() + getNumBytes(dataType) * dataLength);
+                numPixelBytes = in.getFilePointer() - pixelOffset;
+              }
             }
             else {
               if (dataType == 10) in.skipBytes(length);
@@ -397,38 +565,23 @@ public class GatanReader extends FormatReader {
             skipPadding();
             skipPadding();
             int numFields = in.readInt();
-            StringBuffer s = new StringBuffer();
+            long startFP = in.getFilePointer();
+            final StringBuilder s = new StringBuilder();
             in.skipBytes(4);
             skipPadding();
-            long baseFP = in.getFilePointer() + 4;
+            long baseFP = in.getFilePointer();
+            if (version == 4) {
+              baseFP += 4;
+            }
+            int width = version == 4 ? 16 : 8;
             for (int j=0; j<numFields; j++) {
-              if (version == 4) {
-                in.seek(baseFP + j * 16);
-              }
+              in.seek(baseFP + j * width);
               dataType = in.readInt();
+              in.seek(startFP + numFields * width + j * getNumBytes(dataType));
               s.append(readValue(dataType));
               if (j < numFields - 1) s.append(", ");
             }
             value = s.toString();
-            boolean lastTag = parent == null && i == numTags - 1;
-            if (!lastTag) {
-              // search for next tag
-              // empirically, we need to skip 4, 8, 12, 18, 24, or 28
-              // total bytes
-              byte b = 0;
-              final int[] jumps = {4, 3, 3, 5, 5, 3};
-              for (int j=0; j<jumps.length; j++) {
-                in.skipBytes(jumps[j]);
-                if (in.getFilePointer() >= in.length()) return;
-                b = in.readByte();
-                if (b == GROUP || b == VALUE) break;
-              }
-              if (b != GROUP && b != VALUE) {
-                throw new FormatException("Cannot find next tag (pos=" +
-                  in.getFilePointer() + ", label=" + labelString + ")");
-              }
-              in.seek(in.getFilePointer() - 1); // reread tag type code
-            }
           }
           else if (dataType == GROUP) {
             // this is an array of structs
@@ -470,24 +623,86 @@ public class GatanReader extends FormatReader {
         skipPadding();
         skipPadding();
         int num = in.readInt();
-        LOGGER.debug("{}{}: group({}) {", new Object[] {indent, i, num});
-        parseTags(num, labelString, indent + "  ");
+        LOGGER.debug("{}{}: group({}) {} {", new Object[] {indent, i, num, labelString});
+        parseTags(num, labelString.isEmpty() ? parent : labelString, indent + "  ");
         LOGGER.debug("{}}", indent);
+      }
+      else if (type == 23) {
+        in.skipBytes(5);
+        i--;
       }
       else {
         LOGGER.debug("{}{}: unknown type: {}", new Object[] {indent, i, type});
+        LOGGER.debug("  unknown type @ fp = {}", in.getFilePointer());
       }
 
-      NumberFormat f = NumberFormat.getInstance();
+      NumberFormat f = NumberFormat.getInstance(Locale.ENGLISH);
       if (value != null) {
         addGlobalMeta(labelString, value);
 
-        if (labelString.equals("Scale")) {
-          if (value.indexOf(",") == -1) {
-            pixelSizes.add(new Double(value));
+        if (parent != null &&
+          (parent.equals("AnnotationGroupList") ||
+          parent.equals("DocumentObjectList")))
+        {
+          // ROI found
+          ROIShape shape = new ROIShape();
+          if (labelString.equals("AnnotationType")) {
+            shape.type = DataTools.parseDouble(value).intValue();
+            shapes.add(shape);
+          }
+          else if (shapes.size() > 0) {
+            shape = shapes.get(shapes.size() - 1);
+          }
+
+          if (labelString.equals("Rectangle")) {
+            String[] points = value.split(",");
+            shape.y1 = DataTools.parseDouble(points[0].trim());
+            shape.x1 = DataTools.parseDouble(points[1].trim());
+            shape.y2 = DataTools.parseDouble(points[2].trim());
+            shape.x2 = DataTools.parseDouble(points[3].trim());
+          }
+          else if (labelString.equals("Text")) {
+            shape.text = value;
+          }
+          else if (labelString.equals("ForegroundColor")) {
+            String[] colors = value.split(",");
+            int red = DataTools.parseDouble(colors[0].trim()).intValue() & 0xff;
+            int green = DataTools.parseDouble(colors[1].trim()).intValue() & 0xff;
+            int blue = DataTools.parseDouble(colors[2].trim()).intValue() & 0xff;
+            shape.strokeColor = new Color(red, green, blue, 255);
           }
         }
-        else if (labelString.equals("Units")) {
+        else if (parent != null && parent.equals("TextFormat")) {
+          if (labelString.equals("FontSize")) {
+            ROIShape shape = shapes.get(shapes.size() - 1);
+            shape.fontSize = FormatTools.getFontSize(DataTools.parseDouble(value).intValue());
+          }
+        }
+        else if (foundMontage &&
+          parent != null && parent.equals("Stage Position"))
+        {
+          if (labelString.equals("Stage X")) {
+            stageX.add(
+              new Length(DataTools.parseDouble(value), UNITS.REFERENCEFRAME));
+          }
+          else if (labelString.equals("Stage Y")) {
+            stageY.add(
+              new Length(DataTools.parseDouble(value), UNITS.REFERENCEFRAME));
+          }
+          else if (labelString.equals("Stage Z")) {
+            stageZ.add(
+              new Length(DataTools.parseDouble(value), UNITS.REFERENCEFRAME));
+          }
+        }
+
+        boolean validPhysicalSize = parent != null && (parent.equals("Dimension") ||
+          ((pixelSizes.size() == 4 || units.size() == 4) && parent.equals("2")));
+        if (labelString.equals("Scale") && validPhysicalSize) {
+          if (value.indexOf(',') == -1) {
+            pixelSizes.add(f.parse(value).doubleValue());
+          }
+        }
+        else if (labelString.equals("Units") && validPhysicalSize) {
           // make sure that we don't add more units than sizes
           if (pixelSizes.size() == units.size() + 1) {
             units.add(value);
@@ -585,7 +800,10 @@ public class GatanReader extends FormatReader {
         return in.readByte();
       case UNKNOWN:
       case UNKNOWN2:
-        return in.readLong();
+        if (adjustEndianness) in.order(!in.isLittleEndian());
+        long l = in.readLong();
+        if (adjustEndianness) in.order(!in.isLittleEndian());
+        return l;
     }
     return 0;
   }
@@ -605,6 +823,9 @@ public class GatanReader extends FormatReader {
       case UBYTE:
       case CHAR:
         return 1;
+      case UNKNOWN:
+      case UNKNOWN2:
+        return 8;
     }
     return 0;
   }
@@ -615,17 +836,41 @@ public class GatanReader extends FormatReader {
     }
   }
 
-  private Double correctForUnits(Double value, String units) {
-    Double newValue = value;
-    Collator c = Collator.getInstance();
+  private Unit<Length> convertUnits(String units) {
+    Collator c = Collator.getInstance(Locale.ENGLISH);
     if (units != null) {
       if (c.compare("nm", units) == 0) {
-        newValue /= 1000;
+        return UNITS.NANOMETER;
       } else if (c.compare("um", units) != 0 && c.compare("µm", units) != 0) {
         LOGGER.warn("Not adjusting for unknown units: {}", units);
       }
     }
-    return newValue;
+    return UNITS.MICROMETER;
+  }
+
+  /**
+   * Create an empty ROI and link it to the Image.
+   * @param store MetadataStore in which to create the ROI
+   * @param index ROI index
+   * @return corresponding Shape ID to be used with the new ROI
+   */
+  private String createROI(MetadataStore store, int index) {
+    String roi = MetadataTools.createLSID("ROI", index);
+    store.setROIID(roi, index);
+    store.setImageROIRef(roi, 0, index);
+
+    return MetadataTools.createLSID("Shape", index, 0);
+  }
+
+  class ROIShape {
+    public int type;
+    public double x1;
+    public double y1;
+    public double x2;
+    public double y2;
+    public String text;
+    public Length fontSize;
+    public Color strokeColor;
   }
 
 }

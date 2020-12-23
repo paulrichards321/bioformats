@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -39,7 +39,6 @@ import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
 
-import ome.xml.model.primitives.PositiveFloat;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
 
@@ -95,24 +94,31 @@ public class VarianFDFReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
-    if (files.size() > 1) {
-      in = new RandomAccessInputStream(files.get(no));
-      in.order(isLittleEndian());
-    }
-    in.seek(pixelOffsets[no]);
-    readPlane(in, x, getSizeY() - y - h, w, h, buf);
+    try {
+      if (files.size() > 1) {
+        if (in != null) {
+          in.close();
+        }
+        in = new RandomAccessInputStream(files.get(no));
+        in.order(isLittleEndian());
+      }
+      in.seek(pixelOffsets[no]);
+      readPlane(in, x, getSizeY() - y - h, w, h, buf);
 
-    int bpp = FormatTools.getBytesPerPixel(getPixelType());
-    byte[] rowBuf = new byte[w * bpp];
-    for (int row=0; row<h/2; row++) {
-      int src = row * rowBuf.length;
-      int dest = (h - row - 1) * rowBuf.length;
-      System.arraycopy(buf, src, rowBuf, 0, rowBuf.length);
-      System.arraycopy(buf, dest, buf, src, rowBuf.length);
-      System.arraycopy(rowBuf, 0, buf, dest, rowBuf.length);
+      int bpp = FormatTools.getBytesPerPixel(getPixelType());
+      byte[] rowBuf = new byte[w * bpp];
+      for (int row=0; row<h/2; row++) {
+        int src = row * rowBuf.length;
+        int dest = (h - row - 1) * rowBuf.length;
+        System.arraycopy(buf, src, rowBuf, 0, rowBuf.length);
+        System.arraycopy(buf, dest, buf, src, rowBuf.length);
+        System.arraycopy(rowBuf, 0, buf, dest, rowBuf.length);
+      }
     }
-    if (files.size() > 1) {
-      in.close();
+    finally {
+      if (files.size() > 1) {
+        in.close();
+      }
     }
 
     return buf;
@@ -215,11 +221,11 @@ public class VarianFDFReader extends FormatReader {
       if (line.length() == 0) break;
       if (line.startsWith("#")) continue;
 
-      int space = line.indexOf(" ");
-      int eq = line.indexOf("=");
+      int space = line.indexOf(' ');
+      int eq = line.indexOf('=');
       String type = line.substring(0, space).trim();
       String var = line.substring(space, eq).trim();
-      String value = line.substring(eq + 1, line.indexOf(";")).trim();
+      String value = line.substring(eq + 1, line.indexOf(';')).trim();
 
       if (var.equals("*storage")) {
         storedFloats = value.equals("\"float\"");

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -151,9 +151,9 @@ public class JPXReader extends FormatReader {
 
     if (lastSeries == getSeries() && lastPlane == no && lastSeriesPlane != null)
     {
-      RandomAccessInputStream s = new RandomAccessInputStream(lastSeriesPlane);
-      readPlane(s, x, y, w, h, buf);
-      s.close();
+      try (RandomAccessInputStream s = new RandomAccessInputStream(lastSeriesPlane)) {
+        readPlane(s, x, y, w, h, buf);
+      }
       return buf;
     }
 
@@ -169,9 +169,9 @@ public class JPXReader extends FormatReader {
 
     in.seek(pixelOffsets.get(no));
     lastSeriesPlane = new JPEG2000Codec().decompress(in, options);
-    RandomAccessInputStream s = new RandomAccessInputStream(lastSeriesPlane);
-    readPlane(s, x, y, w, h, buf);
-    s.close();
+    try (RandomAccessInputStream s = new RandomAccessInputStream(lastSeriesPlane)) {
+      readPlane(s, x, y, w, h, buf);
+    }
     lastSeries = getSeries();
     lastPlane = no;
     return buf;

@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -143,21 +143,22 @@ public class PictReader extends FormatReader {
       in.seek(jpegOffsets.get(0));
       byte[] b = new byte[(int) (in.length() - in.getFilePointer())];
       in.read(b);
-      RandomAccessInputStream s = new RandomAccessInputStream(b);
-      for (long jpegOffset : jpegOffsets) {
-        s.seek(jpegOffset - jpegOffsets.get(0));
+      try (RandomAccessInputStream s = new RandomAccessInputStream(b)) {
+        for (long jpegOffset : jpegOffsets) {
+          s.seek(jpegOffset - jpegOffsets.get(0));
 
-        CodecOptions options = new CodecOptions();
-        options.interleaved = isInterleaved();
-        options.littleEndian = isLittleEndian();
+          CodecOptions options = new CodecOptions();
+          options.interleaved = isInterleaved();
+          options.littleEndian = isLittleEndian();
 
-        v.write(new JPEGCodec().decompress(s, options));
+          v.write(new JPEGCodec().decompress(s, options));
+          }
       }
 
-      s = new RandomAccessInputStream(v);
-      s.seek(0);
-      readPlane(s, x, y, w, h, buf);
-      s.close();
+      try (RandomAccessInputStream s = new RandomAccessInputStream(v)) {
+        s.seek(0);
+        readPlane(s, x, y, w, h, buf);
+      }
 
       return buf;
     }

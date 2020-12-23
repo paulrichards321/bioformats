@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -35,6 +35,10 @@ package loci.formats;
 import java.io.IOException;
 
 import loci.common.DataTools;
+import loci.formats.meta.MetadataRetrieve;
+import loci.formats.meta.MetadataStore;
+
+import ome.xml.meta.MetadataConverter;
 
 /**
  * Logic to automatically separate the channels in a file.
@@ -119,7 +123,7 @@ public class ChannelSeparator extends ReaderWrapper {
     String order = super.getDimensionOrder();
     if (reader.isRGB() && !reader.isIndexed()) {
       String newOrder = "XYC";
-      if (order.indexOf("Z") > order.indexOf("T")) newOrder += "TZ";
+      if (order.indexOf('Z') > order.indexOf('T')) newOrder += "TZ";
       else newOrder += "ZT";
       return newOrder;
     }
@@ -237,7 +241,7 @@ public class ChannelSeparator extends ReaderWrapper {
     int channel = no % c;
     int bpp = FormatTools.getBytesPerPixel(getPixelType());
 
-    return ImageTools.splitChannels(thumb, channel, c, bpp, false, false);
+    return ImageTools.splitChannels(thumb, channel, c, bpp, false, reader.isInterleaved());
   }
 
   /* @see IFormatReader#close(boolean) */
@@ -296,6 +300,34 @@ public class ChannelSeparator extends ReaderWrapper {
     lastImageY = -1;
     lastImageWidth = -1;
     lastImageHeight = -1;
+
+    MetadataStore store = getMetadataStore();
+    boolean pixelsPopulated = false;
+    if (store instanceof MetadataRetrieve) {
+      MetadataRetrieve retrieve = (MetadataRetrieve) store;
+      for (int s=0; s<getSeriesCount(); s++) {
+        setSeries(s);
+        int rgbChannels = getSizeC() / reader.getEffectiveSizeC();
+        if (rgbChannels == 1) {
+          continue;
+        }
+        for (int c=0; c<reader.getEffectiveSizeC(); c++) {
+          int cIndex = c * rgbChannels;
+          if (cIndex >= retrieve.getChannelCount(s)) {
+            break;
+          }
+          if (!pixelsPopulated) {
+            MetadataTools.populatePixelsOnly(store, this);
+            pixelsPopulated = true;
+          }
+          for (int i=1; i<rgbChannels; i++) {
+            MetadataConverter.convertChannels(retrieve, s, cIndex,
+              store, s, cIndex + i, false);
+          }
+        }
+      }
+      setSeries(0);
+    }
   }
 
 }

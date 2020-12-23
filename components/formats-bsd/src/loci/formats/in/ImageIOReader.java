@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -33,7 +33,6 @@
 package loci.formats.in;
 
 import java.awt.image.BufferedImage;
-import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.IOException;
 
@@ -143,16 +142,10 @@ public abstract class ImageIOReader extends BIFormatReader {
   }
 
   protected void initImage() throws IOException, FormatException {
-      RandomAccessInputStream ras = new RandomAccessInputStream(currentId);
-      try {
-        DataInputStream dis = new DataInputStream(ras);
-        try {
-          img = ImageIO.read(dis);
-        } finally {
-            dis.close();
-        }
-      } finally {
-          ras.close();
+      ;
+      try (RandomAccessInputStream ras = new RandomAccessInputStream(currentId);
+            DataInputStream dis = new DataInputStream(ras)) {
+        img = ImageIO.read(dis);
       }
       if (img == null) throw new FormatException("Invalid image stream");
 

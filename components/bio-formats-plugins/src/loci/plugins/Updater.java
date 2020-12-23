@@ -4,7 +4,7 @@
  * Bio-Formats Importer, Bio-Formats Exporter, Bio-Formats Macro Extensions,
  * Data Browser and Stack Slicer.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -63,7 +63,7 @@ public class Updater implements PlugIn {
   @Override
   public void run(String arg) {
     if (isFiji()) {
-      IJ.showMessage("Please use 'Help > Update Fiji' to update.");
+      IJ.showMessage("Please use 'Help > Update...' to update.");
       return;
     }
 
@@ -149,7 +149,7 @@ public class Updater implements PlugIn {
         }
       }
       else {
-        int dot = filename.indexOf(".");
+        int dot = filename.indexOf('.');
         if (f.startsWith(filename.substring(0, dot)) &&
           f.endsWith(filename.substring(dot)))
         {

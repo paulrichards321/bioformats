@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -37,7 +37,6 @@ import loci.formats.FormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 import ome.units.quantity.Length;
 
@@ -106,10 +105,9 @@ public class FujiReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
-    RandomAccessInputStream s = new RandomAccessInputStream(pixelsFile);
-    readPlane(s, x, y, w, h, buf);
-    s.close();
-
+    try (RandomAccessInputStream s = new RandomAccessInputStream(pixelsFile)) {
+      readPlane(s, x, y, w, h, buf);
+    }
     return buf;
   }
 

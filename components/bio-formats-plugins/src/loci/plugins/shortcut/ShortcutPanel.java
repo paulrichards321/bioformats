@@ -4,7 +4,7 @@
  * Bio-Formats Importer, Bio-Formats Exporter, Bio-Formats Macro Extensions,
  * Data Browser and Stack Slicer.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -98,40 +98,40 @@ public class ShortcutPanel extends JPanel implements ActionListener, PlugIn {
     try {
       URL url = ShortcutPanel.class.getResource("ShortcutPanel.class");
       String path = url.toString();
-      path = path.substring(0, path.indexOf("!")) + "!/plugins.config";
+      path = path.substring(0, path.indexOf('!')) + "!/plugins.config";
       url = new URL(path);
-      BufferedReader in = new BufferedReader(
-        new InputStreamReader(url.openStream(), Constants.ENCODING));
-      while (true) {
-        String line = in.readLine();
-        if (line == null) break;
+      try (BufferedReader in = new BufferedReader(
+        new InputStreamReader(url.openStream(), Constants.ENCODING))) {
+        while (true) {
+          String line = in.readLine();
+          if (line == null) break;
 
-        // determine plugin type
-        boolean normal = line.startsWith(NORMAL_MENU);
-        boolean help = line.startsWith(HELP_MENU);
-        if (!normal && !help) continue;
+          // determine plugin type
+          boolean normal = line.startsWith(NORMAL_MENU);
+          boolean help = line.startsWith(HELP_MENU);
+          if (!normal && !help) continue;
 
-        // parse plugin information
-        int quote1 = line.indexOf("\"");
-        if (quote1 < 0) continue;
-        int quote2 = line.indexOf("\"", quote1 + 1);
-        if (quote2 < 0) continue;
-        int quote3 = line.indexOf("\"", quote2 + 1);
-        if (quote3 < 0) continue;
-        int quote4 = line.indexOf("\"", quote3 + 1);
-        if (quote4 < 0) continue;
-        String name = line.substring(quote1 + 1, quote2);
-        if (help) name = "About " + name.substring(0, name.length() - 3);
-        String plugin = line.substring(quote2 + 2, quote3 - 1).trim();
-        String arg = line.substring(quote3 + 1, quote4);
-        if (name.equals(OPENER_PLUGIN)) index = vNames.size();
-        if (!name.equals(SHORTCUT_PLUGIN)) {
-          vNames.add(name);
-          vPlugins.add(plugin);
-          vArgs.add(arg);
+          // parse plugin information
+          int quote1 = line.indexOf("\"");
+          if (quote1 < 0) continue;
+          int quote2 = line.indexOf("\"", quote1 + 1);
+          if (quote2 < 0) continue;
+          int quote3 = line.indexOf("\"", quote2 + 1);
+          if (quote3 < 0) continue;
+          int quote4 = line.indexOf("\"", quote3 + 1);
+          if (quote4 < 0) continue;
+          String name = line.substring(quote1 + 1, quote2);
+          if (help) name = "About " + name.substring(0, name.length() - 3);
+          String plugin = line.substring(quote2 + 2, quote3 - 1).trim();
+          String arg = line.substring(quote3 + 1, quote4);
+          if (name.equals(OPENER_PLUGIN)) index = vNames.size();
+          if (!name.equals(SHORTCUT_PLUGIN)) {
+            vNames.add(name);
+            vPlugins.add(plugin);
+            vArgs.add(arg);
+          }
         }
       }
-      in.close();
     }
     catch (IOException exc) {
       exc.printStackTrace();

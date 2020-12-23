@@ -7,6 +7,8 @@ import os
 from subprocess import call
 import sys
 import zipfile
+import tarfile
+import platform
 
 # This script archives the base tree and repacks it into a single zip which is
 # the source release, taking care to preserve timestamps and exectute
@@ -16,24 +18,6 @@ import zipfile
 # attributes.  It excludes .gitignore files at this point to avoid
 # polluting the release with version control files.
 
-
-GITVERSION_XML = """<?xml version="1.0" encoding="utf-8"?>
-<project name="gitversion" basedir=".">
-    <property name="release.version" value="%s"/>
-    <property name="release.shortversion" value="%s"/>
-    <property name="vcs.shortrevision" value="%s"/>
-    <property name="vcs.revision" value="%s"/>
-    <property name="vcs.date" value="%s"/>
-</project>
-"""
-
-GITVERSION_CMAKE = """set(OME_VERSION "%s")
-set(OME_VERSION_SHORT "%s")
-set(OME_VCS_SHORTREVISION "%s")
-set(OME_VCS_REVISION "%s")
-set(OME_VCS_DATE %s)
-set(OME_VCS_DATE_S "%s")
-"""
 
 if __name__ == "__main__":
 
@@ -86,7 +70,7 @@ if __name__ == "__main__":
         '--output', "%s/%s-base.zip" % (options.target, prefix),
         'HEAD'])
     if base_archive_status != 0:
-        raise Exception('Failed to create git base archive')
+        raise Exception('Failed to create git zip base archive')
 
     zips = list(["%s/%s-base.zip" % (options.target, prefix)])
 
@@ -114,10 +98,6 @@ if __name__ == "__main__":
                  os.path.splitext(info.filename)[1] == ".dylib" or
                  os.path.splitext(info.filename)[1] == ".so")):
                 continue
-            if (options.release.endswith("-dfsg") and
-                info.filename.startswith(
-                    "%s/components/xsd-fu/python/genshi" % (prefix))):
-                continue
             print("File: %s" % (info.filename))
             # Repack a single zip object; preserve the metadata
             # directly via the ZipInfo object and rewrite the content
@@ -131,18 +111,58 @@ if __name__ == "__main__":
         # Remove repacked zip
         os.remove(name)
 
-    # Embed release number
-    basezip.writestr(
-        "%s/ant/gitversion.xml" % (prefix),
-        GITVERSION_XML % (
-            options.bioformats_version, options.bioformats_shortversion,
-            options.bioformats_vcsshortrevision,
-            options.bioformats_vcsrevision,
-            options.bioformats_vcsdate))
-    basezip.writestr(
-        "%s/cpp/cmake/GitVersion.cmake" % (prefix),
-        GITVERSION_CMAKE % (
-            options.bioformats_version, options.bioformats_shortversion,
-            options.bioformats_vcsshortrevision,
-            options.bioformats_vcsrevision,
-            options.bioformats_vcsdate_unix, options.bioformats_vcsdate))
+    # Repeat for tar archive
+    base_archive_status = call([
+        'git', 'archive', '--format', 'tar',
+        '--prefix', "%s/" % (prefix),
+        '--output', "%s/%s-base.tar" % (options.target, prefix),
+        'HEAD'])
+    if base_archive_status != 0:
+        raise Exception('Failed to create git tar base archive')
+
+    tars = list(["%s/%s-base.tar" % (options.target, prefix)])
+
+    # Create destination tar file
+    print("  - creating %s/%s.tar" % (options.target, prefix))
+    sys.stdout.flush()
+    basetar = tarfile.open("%s/%s.tar" % (options.target, prefix), 'w',
+                           format=tarfile.PAX_FORMAT)
+
+    # Repack each of the separate tars into the destination tar
+    for name in tars:
+        subtar = tarfile.open(name, 'r')
+        print("  - repacking %s" % (name))
+        sys.stdout.flush()
+        # Iterate over the TarInfo objects from the archive
+        for info in subtar.getmembers():
+            # Skip unwanted git and travis files
+            if (os.path.basename(info.name) == '.gitignore' or
+                    os.path.basename(info.name) == '.travis.yml'):
+                continue
+            # Skip files for which we don't have source in this repository,
+            # for GPL compliance
+            if (options.release.endswith("-dfsg") and
+                (os.path.splitext(info.name)[1] == ".jar" or
+                 os.path.splitext(info.name)[1] == ".dll" or
+                 os.path.splitext(info.name)[1] == ".dylib" or
+                 os.path.splitext(info.name)[1] == ".so")):
+                continue
+            print("File: %s" % (info.name))
+            # Repack a single tar object; preserve the metadata
+            # directly via the TarInfo object and rewrite the content
+            basetar.addfile(info, subtar.extractfile(info.name))
+
+        # Close tar or else the remove will fail on Windows
+        subtar.close()
+
+        # Remove repacked tar
+        os.remove(name)
+
+    basetar.close()
+    try:
+        call(['xz', "%s/%s.tar" % (options.target, prefix)])
+    except Exception:
+        # This is expected to fail on Windows when xz is unavailable,
+        # but is always an error on all other platforms.
+        if platform.system() != 'Windows':
+            sys.exit(1)

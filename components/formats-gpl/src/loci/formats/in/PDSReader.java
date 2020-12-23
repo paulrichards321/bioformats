@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -37,7 +37,6 @@ import loci.formats.FormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 import ome.units.UNITS;
 import ome.units.quantity.Length;
@@ -125,13 +124,12 @@ public class PDSReader extends FormatReader {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
     int pad = recordWidth - (getSizeX() % recordWidth);
-    RandomAccessInputStream pixels = new RandomAccessInputStream(pixelsFile);
+    try (RandomAccessInputStream pixels = new RandomAccessInputStream(pixelsFile)) {
+      int realX = reverseX ? getSizeX() - w - x : x;
+      int realY = reverseY ? getSizeY() - h - y : y;
 
-    int realX = reverseX ? getSizeX() - w - x : x;
-    int realY = reverseY ? getSizeY() - h - y : y;
-
-    readPlane(pixels, realX, realY, w, h, pad, buf);
-    pixels.close();
+      readPlane(pixels, realX, realY, w, h, pad, buf);
+    }
 
     if (reverseX) {
       for (int row=0; row<h; row++) {
@@ -201,14 +199,13 @@ public class PDSReader extends FormatReader {
     }
     Length xPos = null, yPos = null;
     Double deltaX = null, deltaY = null;
-    String date = null;
 
     CoreMetadata m = core.get(0);
 
     for (String line : headerData) {
-      int eq = line.indexOf("=");
+      int eq = line.indexOf('=');
       if (eq < 0) continue;
-      int end = line.indexOf("/");
+      int end = line.indexOf('/');
       if (end < 0) end = line.length();
 
       String key = line.substring(0, eq).trim();
@@ -255,12 +252,6 @@ public class PDSReader extends FormatReader {
           m.indexed = lutIndex >= 0;
         }
       }
-      else if (key.equals("SCAN TIME")) {
-        long modTime = new Location(currentId).getAbsoluteFile().lastModified();
-        String year = DateTools.convertDate(modTime, DateTools.UNIX, "yyyy");
-        date = value.replaceAll("'", "") + " " + year;
-        date = DateTools.formatDate(date, DATE_FORMAT);
-      }
       else if (key.equals("FILE REC LEN")) {
         recordWidth = Integer.parseInt(value) / 2;
       }
@@ -286,10 +277,6 @@ public class PDSReader extends FormatReader {
 
     MetadataStore store = makeFilterMetadata();
     MetadataTools.populatePixels(store, this, !minimumMetadata);
-
-    if (date != null) {
-      store.setImageAcquisitionDate(new Timestamp(date), 0);
-    }
 
     if (!minimumMetadata) {
       store.setPlanePositionX(xPos, 0, 0);

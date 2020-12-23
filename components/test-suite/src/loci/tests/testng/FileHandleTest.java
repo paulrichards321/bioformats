@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats manual and automated test suite.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -27,8 +27,6 @@ package loci.tests.testng;
 
 import static org.testng.AssertJUnit.*;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
@@ -67,13 +65,13 @@ public class FileHandleTest {
 
   @Test
   public void testHandleCount() throws FormatException, IOException {
-    ArrayList<String> initialHandles = getHandles();
+    ArrayList<String> initialHandles = TestTools.getHandles();
     reader = new ImageReader();
     reader.setId(id);
 
-    ArrayList<String> intermediateHandles = getHandles();
+    ArrayList<String> intermediateHandles = TestTools.getHandles();
     reader.close();
-    ArrayList<String> finalHandles = getHandles();
+    ArrayList<String> finalHandles = TestTools.getHandles();
 
     int intermediateHandleCount = intermediateHandles.size();
 
@@ -90,7 +88,8 @@ public class FileHandleTest {
       if (s.endsWith("libnio.so") || s.endsWith("resources.jar") ||
         s.startsWith("/usr/lib") || s.startsWith("/opt/") ||
         s.startsWith("/usr/share/locale") || s.startsWith("/lib") ||
-        s.indexOf("turbojpeg") > 0 || s.indexOf("/jre/") > 0)
+        s.indexOf("turbojpeg") > 0 || s.indexOf("/jre/") > 0 ||
+        s.indexOf("nativedata") > 0 || s.indexOf("jhdf") > 0)
       {
         finalHandles.remove(s);
         i--;
@@ -103,46 +102,6 @@ public class FileHandleTest {
     assertEquals(finalHandles.size(), initialHandles.size());
     assertTrue(intermediateHandles.size() >= initialHandles.size());
     assertTrue(intermediateHandleCount < 1024);
-  }
-
-  private ArrayList<String> getHandles() throws IOException {
-    ArrayList<String> names = new ArrayList<String>();
-    String pid = ManagementFactory.getRuntimeMXBean().getName();
-    pid = pid.substring(0, pid.indexOf("@"));
-
-    Runtime rt = Runtime.getRuntime();
-    Process p = rt.exec("lsof -Ftn -p " + pid);
-    BufferedReader s = new BufferedReader(
-      new InputStreamReader(p.getInputStream(), Constants.ENCODING));
-    String line = s.readLine();
-    boolean valid = false;
-    while (true) {
-      try {
-        p.exitValue();
-        if (line == null) {
-          break;
-        }
-      }
-      catch (IllegalThreadStateException e) {
-        LOGGER.trace("", e);
-      }
-      catch (Exception e) {
-        LOGGER.warn("", e);
-      }
-      if (line != null && line.endsWith("REG")) {
-        valid = true;
-      }
-      else if (line != null && line.startsWith("n") && valid) {
-        names.add(line.substring(1, line.length()));
-        valid = false;
-      }
-      line = s.readLine();
-    }
-    s.close();
-    p.getInputStream().close();
-    p.getOutputStream().close();
-    p.getErrorStream().close();
-    return names;
   }
 
 }

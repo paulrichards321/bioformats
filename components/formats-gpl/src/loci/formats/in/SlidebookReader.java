@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -668,7 +668,7 @@ public class SlidebookReader extends FormatReader {
           in.seek(in.getFilePointer() - 1);
           long nSkipped = in.getFilePointer() - fp;
           if (nSkipped < 8) {
-            in.skipBytes((int) (8 - nSkipped));
+            in.skipBytes(8 - nSkipped);
           }
           String objective = readCString().trim();
           in.seek(fp + 144);
@@ -1257,8 +1257,8 @@ public class SlidebookReader extends FormatReader {
         if (objective != null) {
           store.setObjectiveModel(objective, 0, objectiveIndex);
           store.setObjectiveCorrection(
-            getCorrection("Other"), 0, objectiveIndex);
-          store.setObjectiveImmersion(getImmersion("Other"), 0, objectiveIndex);
+            MetadataTools.getCorrection("Other"), 0, objectiveIndex);
+          store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, objectiveIndex);
           if (magnifications != null && magnifications.get(i) > 0) {
             store.setObjectiveNominalMagnification(
                 magnifications.get(i).doubleValue(), 0, objectiveIndex);
@@ -1316,7 +1316,7 @@ public class SlidebookReader extends FormatReader {
           {
             store.setPlaneExposureTime(
               new Time(exposureTimes.get(exposureIndex + c).doubleValue(),
-                       UNITS.S), i, plane);
+                       UNITS.SECOND), i, plane);
           }
         }
         exposureIndex += getSizeC();

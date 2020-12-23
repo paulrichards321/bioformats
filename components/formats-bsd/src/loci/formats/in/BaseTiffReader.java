@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -50,7 +50,6 @@ import loci.formats.tiff.PhotoInterp;
 import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffRational;
 
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 
 import ome.units.quantity.Time;
@@ -230,8 +229,9 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
     putInt("Model", firstIFD, IFD.MODEL);
     putInt("MinSampleValue", firstIFD, IFD.MIN_SAMPLE_VALUE);
     putInt("MaxSampleValue", firstIFD, IFD.MAX_SAMPLE_VALUE);
-    putInt("XResolution", firstIFD, IFD.X_RESOLUTION);
-    putInt("YResolution", firstIFD, IFD.Y_RESOLUTION);
+
+    putDouble("XResolution", firstIFD, IFD.X_RESOLUTION);
+    putDouble("YResolution", firstIFD, IFD.Y_RESOLUTION);
 
     int planar = firstIFD.getIFDIntValue(IFD.PLANAR_CONFIGURATION);
     String planarConfig = null;
@@ -245,8 +245,8 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
     }
     put("PlanarConfiguration", planarConfig);
 
-    putInt("XPosition", firstIFD, IFD.X_POSITION);
-    putInt("YPosition", firstIFD, IFD.Y_POSITION);
+    putDouble("XPosition", firstIFD, IFD.X_POSITION);
+    putDouble("YPosition", firstIFD, IFD.Y_POSITION);
     putInt("FreeOffsets", firstIFD, IFD.FREE_OFFSETS);
     putInt("FreeByteCounts", firstIFD, IFD.FREE_BYTE_COUNTS);
     putInt("GrayResponseUnit", firstIFD, IFD.GRAY_RESPONSE_UNIT);
@@ -445,7 +445,7 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
 
       if (artist != null) {
         String firstName = null, lastName = null;
-        int ndx = artist.indexOf(" ");
+        int ndx = artist.indexOf(' ');
         if (ndx < 0) lastName = artist;
         else {
           firstName = artist.substring(0, ndx);
@@ -482,7 +482,7 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
         if (exif.containsKey(IFD.EXPOSURE_TIME)) {
           Object exp = exif.get(IFD.EXPOSURE_TIME);
           if (exp instanceof TiffRational) {
-            Time exposure = new Time(((TiffRational) exp).doubleValue(), UNITS.S);
+            Time exposure = new Time(((TiffRational) exp).doubleValue(), UNITS.SECOND);
             for (int i=0; i<getImageCount(); i++) {
               store.setPlaneExposureTime(exposure, 0, i);
             }
@@ -520,7 +520,7 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
   protected String getImageCreationDate() {
     Object o = ifds.get(0).getIFDValue(IFD.DATE_TIME);
     if (o instanceof String) return (String) o;
-    if (o instanceof String[]) return ((String[]) o)[0];
+    if (o instanceof String[] && ((String[]) o).length > 0) return ((String[]) o)[0];
     return null;
   }
 
@@ -566,6 +566,15 @@ public abstract class BaseTiffReader extends MinimalTiffReader {
     } catch (FormatException e) {
     }
     put(key, value);
+  }
+
+  protected void putDouble(String key, IFD ifd, int tag) {
+    if (ifd.getIFDValue(tag) instanceof Number) {
+      Number number = (Number) ifd.getIFDValue(tag);
+      if (number != null) {
+        put(key, number.doubleValue());
+      }
+    }
   }
 
   // -- Internal FormatReader API methods --

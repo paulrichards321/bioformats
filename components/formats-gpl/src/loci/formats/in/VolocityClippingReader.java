@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -87,11 +87,10 @@ public class VolocityClippingReader extends FormatReader {
 
     byte[] b = new LZOCodec().decompress(in, null);
 
-    RandomAccessInputStream s = new RandomAccessInputStream(b);
-    s.seek(0);
-    readPlane(s, x, y, w, h, buf);
-    s.close();
-
+    try (RandomAccessInputStream s = new RandomAccessInputStream(b)) {
+      s.seek(0);
+      readPlane(s, x, y, w, h, buf); 
+    }
     return buf;
   }
 

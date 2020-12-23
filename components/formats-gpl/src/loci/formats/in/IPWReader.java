@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -49,7 +49,6 @@ import loci.formats.MissingLibraryException;
 import loci.formats.meta.MetadataStore;
 import loci.formats.services.POIService;
 import loci.formats.tiff.IFD;
-import loci.formats.tiff.IFDList;
 import loci.formats.tiff.PhotoInterp;
 import loci.formats.tiff.TiffParser;
 
@@ -94,25 +93,26 @@ public class IPWReader extends FormatReader {
   @Override
   public byte[][] get8BitLookupTable() throws FormatException, IOException {
     FormatTools.assertId(currentId, true, 1);
-    RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0));
-    TiffParser tp = new TiffParser(stream);
-    IFD firstIFD = tp.getFirstIFD();
-    int[] bits = firstIFD.getBitsPerSample();
-    if (bits[0] <= 8) {
-      int[] colorMap = tp.getColorMap(firstIFD);
-      if (colorMap == null) {
-        return null;
-      }
-
-      byte[][] table = new byte[3][colorMap.length / 3];
-      int next = 0;
-      for (int j=0; j<table.length; j++) {
-        for (int i=0; i<table[0].length; i++) {
-          table[j][i] = (byte) (colorMap[next++] >> 8);
+    try (RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0))) {
+      TiffParser tp = new TiffParser(stream);
+      IFD firstIFD = tp.getFirstIFD();
+      int[] bits = firstIFD.getBitsPerSample();
+      if (bits[0] <= 8) {
+        int[] colorMap = tp.getColorMap(firstIFD);
+        if (colorMap == null) {
+          return null;
         }
-      }
 
-      return table;
+        byte[][] table = new byte[3][colorMap.length / 3];
+        int next = 0;
+        for (int j=0; j<table.length; j++) {
+          for (int i=0; i<table[0].length; i++) {
+            table[j][i] = (byte) (colorMap[next++] >> 8);
+          }
+        }
+
+          return table;
+        }
     }
     return null;
   }
@@ -121,11 +121,9 @@ public class IPWReader extends FormatReader {
   @Override
   public int getOptimalTileWidth() {
     FormatTools.assertId(currentId, true, 1);
-    try {
-      RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0));
+    try (RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0))) {
       TiffParser tp = new TiffParser(stream);
       IFD ifd = tp.getFirstIFD();
-      stream.close();
       return (int) ifd.getTileWidth();
     }
     catch (FormatException e) {
@@ -141,8 +139,7 @@ public class IPWReader extends FormatReader {
   @Override
   public int getOptimalTileHeight() {
     FormatTools.assertId(currentId, true, 1);
-    try {
-      RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0));
+    try (RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0))) {
       TiffParser tp = new TiffParser(stream);
       IFD ifd = tp.getFirstIFD();
       stream.close();
@@ -170,11 +167,11 @@ public class IPWReader extends FormatReader {
       initPOIService();
     }
 
-    RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(no));
-    TiffParser tp = new TiffParser(stream);
-    IFD ifd = tp.getFirstIFD();
-    tp.getSamples(ifd, buf, x, y, w, h);
-    stream.close();
+    try (RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(no))) {
+      TiffParser tp = new TiffParser(stream);
+      IFD ifd = tp.getFirstIFD();
+      tp.getSamples(ifd, buf, x, y, w, h);
+    }
     return buf;
   }
 
@@ -244,9 +241,9 @@ public class IPWReader extends FormatReader {
           for (String token : tokens) {
             String label = "Timestamp";
             String data = token.trim();
-            if (token.indexOf("=") != -1) {
-              label = token.substring(0, token.indexOf("=")).trim();
-              data = token.substring(token.indexOf("=") + 1).trim();
+            if (token.indexOf('=') != -1) {
+              label = token.substring(0, token.indexOf('=')).trim();
+              data = token.substring(token.indexOf('=') + 1).trim();
             }
             addGlobalMeta(label, data);
             if (label.equals("frames")) m.sizeT = Integer.parseInt(data);
@@ -284,11 +281,11 @@ public class IPWReader extends FormatReader {
     LOGGER.info("Populating metadata");
 
     m.imageCount = imageFiles.size();
-
-    RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0));
-    TiffParser tp = new TiffParser(stream);
-    IFD firstIFD = tp.getFirstIFD();
-    stream.close();
+    IFD firstIFD = null;
+    try (RandomAccessInputStream stream = poi.getDocumentStream(imageFiles.get(0))) {
+      TiffParser tp = new TiffParser(stream);
+      firstIFD = tp.getFirstIFD();
+    }
 
     m.rgb = firstIFD.getSamplesPerPixel() > 1;
 

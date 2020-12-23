@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -256,16 +256,16 @@ public class TextReader extends FormatReader {
     }
     else {
       // read data using RandomAccessInputStream (data may not be a file)
-      RandomAccessInputStream in = new RandomAccessInputStream(handle);
-      int no = 0;
-      while (true) {
-        no++;
-        time = checkTime(time, no, in.getFilePointer(), in.length());
-        String line = in.readLine();
-        if (line == null) break; // eof
-        lines.add(line);
+      try (RandomAccessInputStream in = new RandomAccessInputStream(handle)) {
+        int no = 0;
+        while (true) {
+          no++;
+          time = checkTime(time, no, in.getFilePointer(), in.length());
+          String line = in.readLine();
+          if (line == null) break; // eof
+          lines.add(line);
+        }
       }
-      in.close();
     }
     return lines;
   }

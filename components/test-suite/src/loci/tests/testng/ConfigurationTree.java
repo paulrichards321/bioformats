@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats manual and automated test suite.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -67,6 +67,10 @@ public class ConfigurationTree {
    */
   private String configDir;
 
+  /** Base directory on the file system associated with the memo files.
+   */
+  private String cacheDir;
+
   /**
    * Root of tree structure containing configuration data.
    * Each node's user object is a hashtable of key/value pairs.
@@ -95,22 +99,27 @@ public class ConfigurationTree {
    *
    */
   public ConfigurationTree(String rootDir, String configDir) {
+    this(rootDir, configDir, null);
+  }
+
+  /**
+   *  Constructs a new configuration tree rooted at the given directory in the
+   *  file system with a custom configuration directory anc cache directory.
+   *
+   *  @param rootDir a string specifying the root directory
+   *  @param configDir a string specifying the base configuration directory
+   *  @param cacheDir a string specifying the cache  directory
+   */
+  public ConfigurationTree(String rootDir, String configDir, String cacheDir) {
     if (rootDir == null) {
       throw new IllegalArgumentException("rootDir cannot be null.");
     }
-
+    this.rootDir = new File(rootDir).getAbsolutePath();
     if (configDir != null) {
-      Location rootLocation = new Location(rootDir);
-      Location configLocation = new Location(configDir);
-      while (rootLocation.getName().equals(configLocation.getName())) {
-        rootLocation = rootLocation.getParentFile();
-        configLocation = configLocation.getParentFile();
-      }
-
-      this.rootDir = rootLocation.getAbsolutePath();
-      this.configDir = configLocation.getAbsolutePath();
-    } else {
-      this.rootDir = new File(rootDir).getAbsolutePath();
+        this.configDir = new File(configDir).getAbsolutePath();
+    }
+    if (cacheDir != null) {
+      this.cacheDir = new File(cacheDir).getAbsolutePath();
     }
     root = new DefaultMutableTreeNode();
   }
@@ -132,10 +141,19 @@ public class ConfigurationTree {
   }
 
   /**
+   *  Returns the base directory holding the configuration files
+   */
+  public String getCacheDirectory() {
+    return this.cacheDir;
+  }
+
+  /**
    *  Relocate a path from an base directory into a target directory
    */
   public String relocate(String path, String oldRoot, String newRoot) {
-
+    if (!path.startsWith(oldRoot)) {
+      return path;
+    }
     String subPath = path.substring((int) Math.min(
       oldRoot.length() + 1, path.length()));
     if (subPath.length() == 0) {

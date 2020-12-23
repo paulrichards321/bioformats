@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -33,6 +33,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.lang.ArrayUtils;
+
 import loci.common.DataTools;
 import loci.common.DateTools;
 import loci.common.Location;
@@ -52,7 +54,6 @@ import loci.formats.tiff.TiffParser;
 
 import ome.xml.model.primitives.Color;
 import ome.xml.model.primitives.NonNegativeInteger;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.PositiveInteger;
 import ome.xml.model.primitives.Timestamp;
 
@@ -121,7 +122,7 @@ public class MIASReader extends FormatReader {
   public int getRequiredDirectories(String[] files)
     throws FormatException, IOException
   {
-    StringBuffer commonParent = new StringBuffer();
+    final StringBuilder commonParent = new StringBuilder();
 
     int dirCount = 0;
 
@@ -614,11 +615,19 @@ public class MIASReader extends FormatReader {
       }
 
       tiffFiles = tmpFiles.toArray(new String[0]);
+      if (ArrayUtils.isEmpty(tiffFiles)){
+        throw new FormatException("Empty dataset - No tiff files were found.");
+      }
 
       Location firstTiff = new Location(tiffFiles[0]);
 
-      FilePattern fp = new FilePattern(
-        firstTiff.getName(), firstTiff.getParentFile().getAbsolutePath());
+      List<String> names = new ArrayList<String>();
+      for (Location f: firstTiff.getParentFile().listFiles()) {
+        names.add(f.getName());
+      }
+
+      FilePattern fp = new FilePattern(FilePattern.findPattern(
+        firstTiff.getName(), null, names.toArray(new String[names.size()])));
       String[] blocks = fp.getPrefixes();
 
       order[j] = "XY";
@@ -632,15 +641,15 @@ public class MIASReader extends FormatReader {
 
         if (blocks[block].equals("z")) {
           zCount[j] = count[block];
-          order[j] += "Z";
+          order[j] += 'Z';
         }
         else if (blocks[block].equals("t")) {
           tCount[j] = count[block];
-          order[j] += "T";
+          order[j] += 'T';
         }
         else if (blocks[block].equals("mode")) {
           cCount[j] = count[block];
-          order[j] += "C";
+          order[j] += 'C';
         }
         else if (blocks[block].equals("im")) tileRows = count[block];
         else if (blocks[block].equals("")) tileCols = count[block];
@@ -649,11 +658,11 @@ public class MIASReader extends FormatReader {
           else if (block == 2) tileCols = count[block];
           else if (block == 0) {
             zCount[j] = count[block];
-            order[j] += "Z";
+            order[j] += 'Z';
           }
           else if (block == 1) {
             tCount[j] = count[block];
-            order[j] += "T";
+            order[j] += 'T';
           }
         }
         else {
@@ -714,14 +723,14 @@ public class MIASReader extends FormatReader {
       ms.falseColor = readers[0][0].isFalseColor();
       ms.dimensionOrder = order[i];
 
-      if (ms.dimensionOrder.indexOf("Z") == -1) {
-        ms.dimensionOrder += "Z";
+      if (ms.dimensionOrder.indexOf('Z') == -1) {
+        ms.dimensionOrder += 'Z';
       }
-      if (ms.dimensionOrder.indexOf("C") == -1) {
-        ms.dimensionOrder += "C";
+      if (ms.dimensionOrder.indexOf('C') == -1) {
+        ms.dimensionOrder += 'C';
       }
-      if (ms.dimensionOrder.indexOf("T") == -1) {
-        ms.dimensionOrder += "T";
+      if (ms.dimensionOrder.indexOf('T') == -1) {
+        ms.dimensionOrder += 'T';
       }
 
       ms.imageCount = ms.sizeZ * ms.sizeT * cCount[i];
@@ -807,6 +816,13 @@ public class MIASReader extends FormatReader {
     String plateAcqId = MetadataTools.createLSID("PlateAcquisition", 0, 0);
     store.setPlateAcquisitionID(plateAcqId, 0, 0);
     store.setPlateAcquisitionMaximumFieldCount(new PositiveInteger(1), 0, 0);
+    if (nWells >= wellColumns) {
+      store.setPlateRows(new PositiveInteger(nWells / wellColumns), 0);
+    }
+    else {
+      store.setPlateRows(new PositiveInteger(1), 0);
+    }
+    store.setPlateColumns(new PositiveInteger(wellColumns), 0);
 
     for (int well=0; well<nWells; well++) {
       int wellIndex = wellNumber[well];
@@ -836,16 +852,16 @@ public class MIASReader extends FormatReader {
     if (level != MetadataLevel.MINIMUM) {
       String experimentID = MetadataTools.createLSID("Experiment", 0);
       store.setExperimentID(experimentID, 0);
-      store.setExperimentType(getExperimentType("Other"), 0);
+      store.setExperimentType(MetadataTools.getExperimentType("Other"), 0);
       store.setExperimentDescription(experiment.getName(), 0);
 
       // populate SPW metadata
-      store.setPlateColumnNamingConvention(getNamingConvention("Number"), 0);
-      store.setPlateRowNamingConvention(getNamingConvention("Letter"), 0);
+      store.setPlateColumnNamingConvention(MetadataTools.getNamingConvention("Number"), 0);
+      store.setPlateRowNamingConvention(MetadataTools.getNamingConvention("Letter"), 0);
 
       parseTemplateFile(store);
 
-      plateName = plateName.substring(plateName.indexOf("-") + 1);
+      plateName = plateName.substring(plateName.indexOf('-') + 1);
       store.setPlateName(plateName, 0);
       store.setPlateExternalIdentifier(plateName, 0);
 
@@ -938,12 +954,15 @@ public class MIASReader extends FormatReader {
   private Color getChannelColorFromFile(String file)
     throws FormatException, IOException
   {
-    RandomAccessInputStream s = new RandomAccessInputStream(file, 16);
-    TiffParser tp = new TiffParser(s);
-    IFD ifd = tp.getFirstIFD();
-    s.close();
+    IFD ifd = null;
+    int[] colorMap = null;
+    try (RandomAccessInputStream s = new RandomAccessInputStream(file, 16)) {
+      TiffParser tp = new TiffParser(s);
+      ifd = tp.getFirstIFD();
+      colorMap = tp.getColorMap(ifd);
+    }
+
     if (ifd == null) return null;
-    int[] colorMap = tp.getColorMap(ifd);
     if (colorMap == null) return null;
 
     int nEntries = colorMap.length / 3;
@@ -979,7 +998,7 @@ public class MIASReader extends FormatReader {
     int[] position = new int[4];
 
     file = file.substring(file.lastIndexOf(File.separator) + 1);
-    String wellIndex = file.substring(4, file.indexOf("_"));
+    String wellIndex = file.substring(4, file.indexOf('_'));
     position[0] = Integer.parseInt(wellIndex) - 1;
 
     int tIndex = file.indexOf("_t") + 2;
@@ -1054,7 +1073,7 @@ public class MIASReader extends FormatReader {
     String[] lines = data.split("\r\n");
 
     for (String line : lines) {
-      int eq = line.indexOf("=");
+      int eq = line.indexOf('=');
       if (eq != -1) {
         String key = line.substring(0, eq);
         String value = line.substring(eq + 1);
@@ -1117,7 +1136,7 @@ public class MIASReader extends FormatReader {
 
       if (exposure != null) {
         for (int i=0; i<getImageCount(); i++) {
-          store.setPlaneExposureTime(new Time(exposure, UNITS.S), well, i);
+          store.setPlaneExposureTime(new Time(exposure, UNITS.SECOND), well, i);
         }
       }
     }

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -37,9 +37,9 @@ import loci.formats.FormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
-import ome.xml.model.primitives.PositiveFloat;
-import ome.xml.model.primitives.Timestamp;
+
 import ome.units.quantity.Length;
+import ome.xml.model.primitives.Timestamp;
 
 /**
  * UnisokuReader is the file format reader for Unisoku STM files.
@@ -74,7 +74,7 @@ public class UnisokuReader extends FormatReader {
       return super.isThisType(name, open);
     }
 
-    if (name.indexOf(".") < 0) {
+    if (name.indexOf('.') < 0) {
       return false;
     }
 
@@ -116,11 +116,10 @@ public class UnisokuReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
-    RandomAccessInputStream dat = new RandomAccessInputStream(datFile);
-    dat.order(isLittleEndian());
-    readPlane(dat, x, y, w, h, buf);
-    dat.close();
-
+    try (RandomAccessInputStream dat = new RandomAccessInputStream(datFile)) {
+      dat.order(isLittleEndian());
+      readPlane(dat, x, y, w, h, buf);
+    }
     return buf;
   }
 
@@ -152,6 +151,8 @@ public class UnisokuReader extends FormatReader {
 
     String header = DataTools.readFile(id);
     String[] lines = header.split("\r");
+    Length sizeX = null;
+    Length sizeY = null;
 
     String imageName = null, remark = null, date = null;
     double pixelSizeX = 0d, pixelSizeY = 0d;
@@ -160,7 +161,7 @@ public class UnisokuReader extends FormatReader {
       lines[i] = lines[i].trim();
       if (lines[i].startsWith(":")) {
         String key = lines[i++];
-        StringBuffer data = new StringBuffer();
+        final StringBuilder data = new StringBuilder();
         while (i < lines.length && !lines[i].trim().startsWith(":")) {
           data.append(" ");
           data.append(lines[i++].trim());
@@ -177,7 +178,7 @@ public class UnisokuReader extends FormatReader {
           date = DateTools.formatDate(value, "MM/dd/yy HH:mm:ss");
         }
         else if (key.startsWith(":ascii flag; data type")) {
-          value = value.substring(value.indexOf(" ") + 1);
+          value = value.substring(value.indexOf(' ') + 1);
           int type = Integer.parseInt(value);
           boolean signed = type % 2 == 1;
           int bytes = type / 2;
@@ -197,17 +198,13 @@ public class UnisokuReader extends FormatReader {
             String unit = v[0];
             pixelSizeX = Double.parseDouble(v[2]) - Double.parseDouble(v[1]);
             pixelSizeX /= getSizeX();
-            if (unit.equals("nm")) {
-              pixelSizeX /= 1000;
-            }
+            sizeX = FormatTools.getPhysicalSizeX(pixelSizeX, unit);
           }
           else if (key.startsWith(":y_data ->")) {
             String unit = v[0];
             pixelSizeY = Double.parseDouble(v[2]) - Double.parseDouble(v[1]);
             pixelSizeY /= getSizeY();
-            if (unit.equals("nm")) {
-              pixelSizeY /= 1000;
-            }
+            sizeY = FormatTools.getPhysicalSizeY(pixelSizeY, unit);
           }
         }
       }
@@ -234,8 +231,6 @@ public class UnisokuReader extends FormatReader {
     if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
       store.setImageDescription(remark, 0);
 
-      Length sizeX = FormatTools.getPhysicalSizeX(pixelSizeX);
-      Length sizeY = FormatTools.getPhysicalSizeY(pixelSizeY);
       if (sizeX != null) {
         store.setPixelsPhysicalSizeX(sizeX, 0);
       }

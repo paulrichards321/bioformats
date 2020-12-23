@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -45,7 +45,6 @@ import loci.formats.MetadataTools;
 import loci.formats.meta.IMinMaxStore;
 import loci.formats.meta.MetadataStore;
 
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 
 import org.xml.sax.Attributes;
@@ -246,12 +245,12 @@ public class BioRadReader extends FormatReader {
 
     if (picFiles != null) {
       int file = no % picFiles.length;
-      RandomAccessInputStream ras = new RandomAccessInputStream(picFiles[file]);
-      long offset = (no / picFiles.length) * FormatTools.getPlaneSize(this);
-      ras.seek(offset + 76);
+      try (RandomAccessInputStream ras = new RandomAccessInputStream(picFiles[file])) {
+        long offset = (no / picFiles.length) * FormatTools.getPlaneSize(this);
+        ras.seek(offset + 76);
 
-      readPlane(ras, x, y, w, h, buf);
-      ras.close();
+        readPlane(ras, x, y, w, h, buf);
+      }
     }
     else {
       in.seek(no * FormatTools.getPlaneSize(this) + 76);
@@ -374,7 +373,7 @@ public class BioRadReader extends FormatReader {
     // skip image data
     int imageLen = getSizeX() * getSizeY();
     int bpp = FormatTools.getBytesPerPixel(getPixelType());
-    in.skipBytes(bpp * getImageCount() * imageLen + 6);
+    in.skipBytes((long) bpp * getImageCount() * imageLen + 6);
 
     m.sizeZ = getImageCount();
     m.sizeC = 1;
@@ -388,12 +387,6 @@ public class BioRadReader extends FormatReader {
     m.falseColor = true;
 
     LOGGER.info("Reading notes");
-
-    String zoom = null, zstart = null, zstop = null, mag = null;
-    String gain1 = null, gain2 = null, gain3 = null;
-    String offset1 = null;
-    String ex1 = null, ex2 = null, ex3 = null;
-    String em1 = null, em2 = null, em3 = null;
 
     MetadataStore store = makeFilterMetadata();
 
@@ -420,9 +413,9 @@ public class BioRadReader extends FormatReader {
           used.add(path);
 
           DefaultHandler handler = new BioRadHandler();
-          RandomAccessInputStream xml = new RandomAccessInputStream(path);
-          XMLTools.parseXML(xml, handler);
-          xml.close();
+          try (RandomAccessInputStream xml = new RandomAccessInputStream(path)) {
+            XMLTools.parseXML(xml, handler);
+          }
 
           used.remove(currentId);
           for (int q=0; q<list.length; q++) {
@@ -487,10 +480,10 @@ public class BioRadReader extends FormatReader {
       String file =
         picFiles == null ? currentId : picFiles[plane % picFiles.length];
       LOGGER.trace("reading table for C = {} from {}", channel, file);
-      RandomAccessInputStream s = new RandomAccessInputStream(file);
-      s.order(true);
-      readLookupTables(s);
-      s.close();
+      try (RandomAccessInputStream s = new RandomAccessInputStream(file)) {
+        s.order(true);
+        readLookupTables(s);
+      }
       if (lut == null) break;
     }
     m.indexed = lut != null;
@@ -511,8 +504,8 @@ public class BioRadReader extends FormatReader {
 
       store.setObjectiveLensNA(new Double(lens), 0, 0);
       store.setObjectiveNominalMagnification(new Double(magFactor), 0, 0);
-      store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
-      store.setObjectiveImmersion(getImmersion("Other"), 0, 0);
+      store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
+      store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, 0);
 
       // link Detector to Image
       for (int i=0; i<getEffectiveSizeC(); i++) {
@@ -523,7 +516,7 @@ public class BioRadReader extends FormatReader {
           String detectorID = MetadataTools.createLSID("Detector", 0, i);
           store.setDetectorSettingsID(detectorID, 0, i);
           store.setDetectorID(detectorID, 0, i);
-          store.setDetectorType(getDetectorType("Other"), 0, i);
+          store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, i);
         }
         if (detectorOffset != null) {
           store.setDetectorSettingsOffset(detectorOffset, 0, i);
@@ -545,7 +538,7 @@ public class BioRadReader extends FormatReader {
     throws IOException
   {
     s.seek(70);
-    int imageLen = getSizeX() * getSizeY();
+    long imageLen = getSizeX() * getSizeY();
     if (picFiles == null) imageLen *= getImageCount();
     else {
       imageLen *= (getImageCount() / picFiles.length);
@@ -646,9 +639,9 @@ public class BioRadReader extends FormatReader {
             addGlobalMetaList("Note", n.toString());
             break;
           case NOTE_TYPE_VARIABLE:
-            if (n.p.indexOf("=") >= 0) {
-              String key = n.p.substring(0, n.p.indexOf("=")).trim();
-              String value = n.p.substring(n.p.indexOf("=") + 1).trim();
+            if (n.p.indexOf('=') >= 0) {
+              String key = n.p.substring(0, n.p.indexOf('=')).trim();
+              String value = n.p.substring(n.p.indexOf('=') + 1).trim();
               addGlobalMeta(key, value);
 
               if (key.equals("INFO_OBJECTIVE_NAME")) {
@@ -670,7 +663,7 @@ public class BioRadReader extends FormatReader {
                       MetadataTools.createLSID("Detector", 0, nextDetector);
                     store.setDetectorID(detectorID, 0, nextDetector);
                     store.setDetectorType(
-                      getDetectorType("Other"), 0, nextDetector);
+                      MetadataTools.getDetectorType("Other"), 0, nextDetector);
 
                     if (key.endsWith("OFFSET")) {
                       if (nextDetector < offset.size()) {
@@ -860,7 +853,7 @@ public class BioRadReader extends FormatReader {
                     store.setDetectorID(detectorID, 0, i);
                     store.setDetectorOffset(new Double(values[i * 3]), 0, i);
                     store.setDetectorGain(new Double(values[i * 3 + 1]), 0, i);
-                    store.setDetectorType(getDetectorType("Other"), 0, i);
+                    store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, i);
                   }
                   break;
                 case 12:
@@ -941,7 +934,7 @@ public class BioRadReader extends FormatReader {
                   String experimentID =
                     MetadataTools.createLSID("Experiment", 0);
                   store.setExperimentID(experimentID, 0);
-                  store.setExperimentType(getExperimentType(values[2]), 0);
+                  store.setExperimentType(MetadataTools.getExperimentType(values[2]), 0);
                   break;
                 case 21:
                   addGlobalMeta("Time Course - ion name", values[0]);
@@ -1128,7 +1121,7 @@ public class BioRadReader extends FormatReader {
 
     @Override
     public String toString() {
-      StringBuffer sb = new StringBuffer(100);
+      final StringBuilder sb = new StringBuilder(100);
       sb.append("level=");
       sb.append(level);
       sb.append("; num=");

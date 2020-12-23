@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -27,6 +27,7 @@ package loci.formats.in;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.ArrayList;
 
 import loci.common.DataTools;
@@ -39,7 +40,6 @@ import loci.formats.FormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.Timestamp;
 import ome.units.quantity.Length;
 
@@ -163,7 +163,7 @@ public class InveonReader extends FormatReader {
       line = line.trim();
 
       if (!line.startsWith("#")) {
-        int space = line.indexOf(" ");
+        int space = line.indexOf(' ');
         if (space < 0) {
           continue;
         }
@@ -248,13 +248,13 @@ public class InveonReader extends FormatReader {
           key.equals("ct_projection_center_offset") ||
           key.equals("ct_projection_horizontal_bed_offset"))
         {
-          space = value.indexOf(" ");
+          space = value.indexOf(' ');
           int index = Integer.parseInt(value.substring(0, space));
           value = value.substring(space + 1);
           key += " " + index;
         }
         else if (key.equals("user")) {
-          space = value.indexOf(" ");
+          space = value.indexOf(' ');
           key = value.substring(0, space);
           value = value.substring(space + 1);
         }
@@ -265,7 +265,21 @@ public class InveonReader extends FormatReader {
           value = value.substring(value.lastIndexOf(File.separator) + 1);
 
           Location header = new Location(currentId).getAbsoluteFile();
-          datFile = new Location(header.getParent(), value).getAbsolutePath();
+          Location dat = new Location(header.getParent(), value);
+          if (dat.exists()) {
+            datFile = dat.getAbsolutePath();
+          }
+          else {
+            // usually this means that the files were renamed
+            String[] allFiles = header.getParentFile().list(true);
+            Arrays.sort(allFiles);
+            String headerName = header.getName();
+            for (String file : allFiles) {
+              if (!headerName.equals(file) && headerName.startsWith(file)) {
+                datFile = new Location(header.getParent(), file).getAbsolutePath();
+              }
+            }
+          }
         }
         else if (key.equals("time_frames")) {
           int sizeT = Integer.parseInt(value);
@@ -628,7 +642,7 @@ public class InveonReader extends FormatReader {
   }
 
   private String transformFilter(String value) {
-    int space = value.indexOf(" ");
+    int space = value.indexOf(' ');
     int filter = Integer.parseInt(value.substring(0, space));
     String cutoff = " (cutoff = " + value.substring(space + 1) + ")";
 

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -229,13 +229,13 @@ public class ImarisReader extends FormatReader {
       if (sizeZ != null) {
         store.setPixelsPhysicalSizeZ(sizeZ, 0);
       }
-      store.setPixelsTimeIncrement(new Time(1.0, UNITS.S), 0);
+      store.setPixelsTimeIncrement(new Time(1.0, UNITS.SECOND), 0);
 
       // populate LogicalChannel data
 
       for (int i=0; i<getSizeC(); i++) {
         if (pinholes[i] > 0) {
-          store.setChannelPinholeSize(new Length(pinholes[i], UNITS.MICROM), 0, i);
+          store.setChannelPinholeSize(new Length(pinholes[i], UNITS.MICROMETER), 0, i);
         }
       }
 
@@ -250,7 +250,7 @@ public class ImarisReader extends FormatReader {
         // link DetectorSettings to an actual Detector
         String detectorID = MetadataTools.createLSID("Detector", 0, i);
         store.setDetectorID(detectorID, 0, i);
-        store.setDetectorType(getDetectorType("Other"), 0, i);
+        store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, i);
         store.setDetectorSettingsID(detectorID, 0, i);
       }
     }

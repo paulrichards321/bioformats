@@ -1,8 +1,8 @@
 /*
  * #%L
- * BSD implementations of Bio-Formats readers and writers
+ * Top-level reader and writer APIs
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -42,18 +42,14 @@ import loci.common.services.DependencyException;
 import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.meta.IMetadata;
+import loci.formats.meta.IPyramidStore;
 import loci.formats.meta.MetadataRetrieve;
 import loci.formats.meta.MetadataStore;
 import loci.formats.ome.OMEXMLMetadata;
 import loci.formats.services.OMEXMLService;
-import ome.xml.meta.MetadataRoot;
-import ome.xml.meta.OMEXMLMetadataRoot;
-import ome.xml.model.BinData;
-import ome.xml.model.enums.DimensionOrder;
-import ome.xml.model.enums.EnumerationException;
-import ome.xml.model.enums.PixelType;
+import ome.xml.model.enums.*;
+import ome.xml.model.enums.handlers.*;
 import ome.xml.model.primitives.NonNegativeInteger;
-import ome.xml.model.primitives.NonNegativeLong;
 import ome.xml.model.primitives.PositiveInteger;
 import ome.xml.model.primitives.Timestamp;
 
@@ -161,6 +157,17 @@ public final class MetadataTools {
       store.setPixelsSignificantBits(
         new PositiveInteger(r.getBitsPerPixel()), i);
 
+      if (store instanceof IPyramidStore) {
+        for (int res=1; res<r.getResolutionCount(); res++) {
+          r.setResolution(res);
+          ((IPyramidStore) store).setResolutionSizeX(
+            new PositiveInteger(r.getSizeX()), i, res);
+          ((IPyramidStore) store).setResolutionSizeY(
+            new PositiveInteger(r.getSizeY()), i, res);
+        }
+        r.setResolution(0);
+      }
+
       try {
         OMEXMLService service =
           new ServiceFactory().getInstance(OMEXMLService.class);
@@ -170,7 +177,7 @@ public final class MetadataTools {
             OMEXMLMetadata omeMeta;
             try {
               omeMeta = service.getOMEMetadata(service.asRetrieve(baseStore));
-              if (omeMeta.getTiffDataCount(i) == 0) {
+              if (omeMeta.getTiffDataCount(i) == 0 && omeMeta.getPixelsBinDataCount(i) == 0) {
                 service.addMetadataOnly(omeMeta, i, i == 0);
               }
             }
@@ -266,6 +273,17 @@ public final class MetadataTools {
       populatePixelsOnly(store, i, r.isLittleEndian(), r.getDimensionOrder(),
         pixelType, r.getSizeX(), r.getSizeY(), r.getSizeZ(), r.getSizeC(),
         r.getSizeT(), r.getRGBChannelCount());
+
+      if (store instanceof IPyramidStore) {
+        for (int res=1; res<r.getResolutionCount(); res++) {
+          r.setResolution(res);
+          ((IPyramidStore) store).setResolutionSizeX(
+            new PositiveInteger(r.getSizeX()), i, res);
+          ((IPyramidStore) store).setResolutionSizeY(
+            new PositiveInteger(r.getSizeY()), i, res);
+        }
+        r.setResolution(0);
+      }
     }
     r.setSeries(oldSeries);
   }
@@ -361,8 +379,11 @@ public final class MetadataTools {
           " is null");
       }
     }
-    if (src.getPixelsBinDataBigEndian(n, 0) == null) {
-      throw new FormatException("BigEndian #" + n + " is null");
+    if (src.getPixelsBigEndian(n) == null)
+    {
+      if (src.getPixelsBinDataCount(n) == 0 || src.getPixelsBinDataBigEndian(n, 0) == null) {
+        throw new FormatException("BigEndian #" + n + " is null");
+      }
     }
     if (src.getPixelsDimensionOrder(n) == null) {
       throw new FormatException("DimensionOrder #" + n + " is null");
@@ -481,6 +502,428 @@ public final class MetadataTools {
     }
     catch (ServiceException exc) {
       return null;
+    }
+  }
+
+  // -- Metadata enumeration convenience methods --
+
+  /**
+   * Retrieves an {@link ome.xml.model.enums.AcquisitionMode} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static AcquisitionMode getAcquisitionMode(String value)
+    throws FormatException
+  {
+    AcquisitionModeEnumHandler handler = new AcquisitionModeEnumHandler();
+    try {
+      return (AcquisitionMode) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("AcquisitionMode creation failed", e);
+    }
+  }
+
+  /**
+   * Retrieves an {@link ome.xml.model.enums.ArcType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static ArcType getArcType(String value) throws FormatException {
+    ArcTypeEnumHandler handler = new ArcTypeEnumHandler();
+    try {
+      return (ArcType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("ArcType creation failed", e);
+    }
+  }
+
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Binning} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Binning getBinning(String value) throws FormatException {
+    BinningEnumHandler handler = new BinningEnumHandler();
+    try {
+      return (Binning) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Binning creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Compression} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Compression getCompression(String value) throws FormatException {
+    CompressionEnumHandler handler = new CompressionEnumHandler();
+    try {
+      return (Compression) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Compression creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.ContrastMethod} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static ContrastMethod getContrastMethod(String value)
+    throws FormatException
+  {
+    ContrastMethodEnumHandler handler = new ContrastMethodEnumHandler();
+    try {
+      return (ContrastMethod) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("ContrastMethod creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Correction} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Correction getCorrection(String value) throws FormatException {
+    CorrectionEnumHandler handler = new CorrectionEnumHandler();
+    try {
+      return (Correction) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Correction creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.DetectorType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static DetectorType getDetectorType(String value) throws FormatException {
+    DetectorTypeEnumHandler handler = new DetectorTypeEnumHandler();
+    try {
+      return (DetectorType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("DetectorType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.DimensionOrder} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static DimensionOrder getDimensionOrder(String value)
+    throws FormatException
+  {
+    DimensionOrderEnumHandler handler = new DimensionOrderEnumHandler();
+    try {
+      return (DimensionOrder) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("DimensionOrder creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.ExperimentType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static ExperimentType getExperimentType(String value)
+    throws FormatException
+  {
+    ExperimentTypeEnumHandler handler = new ExperimentTypeEnumHandler();
+    try {
+      return (ExperimentType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("ExperimentType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.FilamentType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static FilamentType getFilamentType(String value) throws FormatException {
+    FilamentTypeEnumHandler handler = new FilamentTypeEnumHandler();
+    try {
+      return (FilamentType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("FilamentType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.FillRule} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static FillRule getFillRule(String value) throws FormatException {
+    FillRuleEnumHandler handler = new FillRuleEnumHandler();
+    try {
+      return (FillRule) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("FillRule creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.FilterType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static FilterType getFilterType(String value) throws FormatException {
+    FilterTypeEnumHandler handler = new FilterTypeEnumHandler();
+    try {
+      return (FilterType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("FilterType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.FontFamily} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static FontFamily getFontFamily(String value) throws FormatException {
+    FontFamilyEnumHandler handler = new FontFamilyEnumHandler();
+    try {
+      return (FontFamily) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("FontFamily creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.FontStyle} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static FontStyle getFontStyle(String value) throws FormatException {
+    FontStyleEnumHandler handler = new FontStyleEnumHandler();
+    try {
+      return (FontStyle) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("FontStyle creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.IlluminationType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static IlluminationType getIlluminationType(String value)
+    throws FormatException
+  {
+    IlluminationTypeEnumHandler handler = new IlluminationTypeEnumHandler();
+    try {
+      return (IlluminationType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("IlluminationType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Immersion} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Immersion getImmersion(String value) throws FormatException {
+    ImmersionEnumHandler handler = new ImmersionEnumHandler();
+    try {
+      return (Immersion) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Immersion creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.LaserMedium} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static LaserMedium getLaserMedium(String value) throws FormatException {
+    LaserMediumEnumHandler handler = new LaserMediumEnumHandler();
+    try {
+      return (LaserMedium) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("LaserMedium creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.LaserType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static LaserType getLaserType(String value) throws FormatException {
+    LaserTypeEnumHandler handler = new LaserTypeEnumHandler();
+    try {
+      return (LaserType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("LaserType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Marker} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Marker getMarker(String value) throws FormatException {
+    MarkerEnumHandler handler = new MarkerEnumHandler();
+    try {
+      return (Marker) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Marker creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Medium} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Medium getMedium(String value) throws FormatException {
+    MediumEnumHandler handler = new MediumEnumHandler();
+    try {
+      return (Medium) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Medium creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.MicrobeamManipulationType}
+   * enumeration value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static MicrobeamManipulationType getMicrobeamManipulationType(String value)
+    throws FormatException
+  {
+    MicrobeamManipulationTypeEnumHandler handler =
+      new MicrobeamManipulationTypeEnumHandler();
+    try {
+      return (MicrobeamManipulationType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("MicrobeamManipulationType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.MicroscopeType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static MicroscopeType getMicroscopeType(String value)
+    throws FormatException
+  {
+    MicroscopeTypeEnumHandler handler = new MicroscopeTypeEnumHandler();
+    try {
+      return (MicroscopeType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("MicroscopeType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.NamingConvention} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static NamingConvention getNamingConvention(String value)
+    throws FormatException
+  {
+    NamingConventionEnumHandler handler = new NamingConventionEnumHandler();
+    try {
+      return (NamingConvention) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("NamingConvention creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.PixelType} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static PixelType getPixelType(String value) throws FormatException {
+    PixelTypeEnumHandler handler = new PixelTypeEnumHandler();
+    try {
+      return (PixelType) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("PixelType creation failed", e);
+    }
+  }
+  /**
+   * Retrieves an {@link ome.xml.model.enums.Pulse} enumeration
+   * value for the given String.
+   *
+   * @throws ome.xml.model.enums.EnumerationException if an appropriate
+   *  enumeration value is not found.
+   */
+  public static Pulse getPulse(String value) throws FormatException {
+    PulseEnumHandler handler = new PulseEnumHandler();
+    try {
+      return (Pulse) handler.getEnumeration(value);
+    }
+    catch (EnumerationException e) {
+      throw new FormatException("Pulse creation failed", e);
     }
   }
 

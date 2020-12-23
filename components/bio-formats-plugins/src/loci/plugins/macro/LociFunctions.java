@@ -4,7 +4,7 @@
  * Bio-Formats Importer, Bio-Formats Exporter, Bio-Formats Macro Extensions,
  * Data Browser and Stack Slicer.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -29,10 +29,8 @@ package loci.plugins.macro;
 
 import ij.IJ;
 import ij.ImagePlus;
-import ij.process.ImageProcessor;
 
 import java.io.IOException;
-import java.util.Arrays;
 
 import loci.common.Region;
 import loci.common.services.DependencyException;
@@ -54,8 +52,6 @@ import loci.plugins.in.ImportProcess;
 import loci.plugins.in.ImporterOptions;
 import loci.plugins.util.ImageProcessorReader;
 import loci.plugins.util.LociPrefs;
-
-import ome.xml.model.primitives.PositiveFloat;
 
 import ome.units.quantity.Length;
 import ome.units.quantity.Time;
@@ -79,7 +75,7 @@ public class LociFunctions extends MacroFunctions {
 
   /** URL for Javadocs. */
   public static final String URL_JAVADOCS =
-    "http://ci.openmicroscopy.org/job/BIOFORMATS-5.1-latest/javadoc/";
+    "https://downloads.openmicroscopy.org/bio-formats/" + FormatTools.VERSION + "/api/";
 
   // -- Fields --
 
@@ -422,8 +418,9 @@ public class LociFunctions extends MacroFunctions {
   public void getFormat(String id, String[] format)
     throws FormatException, IOException
   {
-    ImageReader reader = new ImageReader();
-    format[0] = reader.getFormat(id);
+    try (ImageReader reader = new ImageReader()) {
+      format[0] = reader.getFormat(id);
+    }
   }
 
   public void setId(String id) throws FormatException, IOException {
@@ -458,7 +455,7 @@ public class LociFunctions extends MacroFunctions {
     if (planeIndex >= 0) {
       Time valTime = retrieve.getPlaneDeltaT(imageIndex, planeIndex);
       if (valTime != null ) {
-        val = valTime.value(UNITS.S).doubleValue();
+        val = valTime.value(UNITS.SECOND).doubleValue();
       }
     }
     deltaT[0] = val;
@@ -470,7 +467,10 @@ public class LociFunctions extends MacroFunctions {
     MetadataRetrieve retrieve = (MetadataRetrieve) r.getMetadataStore();
     Double val = null;
     if (planeIndex >= 0) {
-      val = retrieve.getPlaneExposureTime(imageIndex, planeIndex).value(UNITS.S).doubleValue();
+      Time valTime = retrieve.getPlaneExposureTime(imageIndex, planeIndex);
+      if (valTime != null) {
+        val = valTime.value(UNITS.SECOND).doubleValue();
+      }
     }
     exposureTime[0] = val == null ? new Double(Double.NaN) : val;
   }
@@ -522,7 +522,7 @@ public class LociFunctions extends MacroFunctions {
     MetadataRetrieve retrieve = (MetadataRetrieve) r.getMetadataStore();
     Length x = retrieve.getPixelsPhysicalSizeX(imageIndex);
     if (x != null) {
-      sizeX[0] = x.value(UNITS.MICROM).doubleValue();
+      sizeX[0] = x.value(UNITS.MICROMETER).doubleValue();
     }
     if (sizeX[0] == null) sizeX[0] = new Double(Double.NaN);
   }
@@ -532,7 +532,7 @@ public class LociFunctions extends MacroFunctions {
     MetadataRetrieve retrieve = (MetadataRetrieve) r.getMetadataStore();
     Length y = retrieve.getPixelsPhysicalSizeY(imageIndex);
     if (y != null) {
-      sizeY[0] = y.value(UNITS.MICROM).doubleValue();
+      sizeY[0] = y.value(UNITS.MICROMETER).doubleValue();
     }
     if (sizeY[0] == null) sizeY[0] = new Double(Double.NaN);
   }
@@ -542,7 +542,7 @@ public class LociFunctions extends MacroFunctions {
     MetadataRetrieve retrieve = (MetadataRetrieve) r.getMetadataStore();
     Length z = retrieve.getPixelsPhysicalSizeZ(imageIndex);
     if (z != null) {
-      sizeZ[0] = z.value(UNITS.MICROM).doubleValue();
+      sizeZ[0] = z.value(UNITS.MICROMETER).doubleValue();
     }
     if (sizeZ[0] == null) sizeZ[0] = new Double(Double.NaN);
   }
@@ -550,7 +550,7 @@ public class LociFunctions extends MacroFunctions {
   public void getPixelsTimeIncrement(Double[] sizeT) {
     int imageIndex = r.getSeries();
     MetadataRetrieve retrieve = (MetadataRetrieve) r.getMetadataStore();
-    sizeT[0] = retrieve.getPixelsTimeIncrement(imageIndex).value(UNITS.S).doubleValue();
+    sizeT[0] = retrieve.getPixelsTimeIncrement(imageIndex).value(UNITS.SECOND).doubleValue();
     if (sizeT[0] == null) sizeT[0] = new Double(Double.NaN);
   }
 
@@ -728,6 +728,8 @@ public class LociFunctions extends MacroFunctions {
       IJ.log("-- dimension order.");
       IJ.log("Ext.getMetadataValue(field, value)");
       IJ.log("-- Obtains the specified metadata field's value.");
+      IJ.log("Ext.getSeriesMetadataValue(field, value)");
+      IJ.log("-- Obtains the specified series metadata field's value.");
       IJ.log("Ext.getSeriesName(seriesName)");
       IJ.log("-- Obtains the name of the current series.");
       IJ.log("Ext.getImageCreationDate(creationDate)");

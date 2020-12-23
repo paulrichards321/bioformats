@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -140,8 +140,8 @@ public class HISReader extends FormatReader {
         if (getBitsPerPixel() == 12) {
           core.get(i - 1).bitsPerPixel = 16;
 
-          int prevSkip = (getSizeX() * getSizeY() * getSizeC() * 12) / 8;
-          int totalBytes = FormatTools.getPlaneSize(this);
+          long prevSkip = ((long) getSizeX() * getSizeY() * getSizeC() * 12) / 8;
+          long totalBytes = FormatTools.getPlaneSize(this);
           in.skipBytes(totalBytes - prevSkip);
           adjustedBitDepth = true;
         }
@@ -187,7 +187,7 @@ public class HISReader extends FormatReader {
       if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
         String[] data = comment.split(";");
         for (String token : data) {
-          int eq = token.indexOf("=");
+          int eq = token.indexOf('=');
           if (eq != -1) {
             String key = token.substring(0, eq);
             String value = token.substring(eq + 1);
@@ -244,14 +244,14 @@ public class HISReader extends FormatReader {
         if (date[i] != null) {
           store.setImageAcquisitionDate(new Timestamp(date[i]), i);
         }
-        store.setPlaneExposureTime(new Time(exposureTime[i], UNITS.S), i, 0);
+        store.setPlaneExposureTime(new Time(exposureTime[i], UNITS.SECOND), i, 0);
 
         String detectorID = MetadataTools.createLSID("Detector", 0, i);
         store.setDetectorID(detectorID, 0, i);
         store.setDetectorOffset(offset[i], 0, i);
-        store.setDetectorType(getDetectorType("Other"), 0, i);
+        store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, i);
         store.setDetectorSettingsID(detectorID, i, 0);
-        store.setDetectorSettingsBinning(getBinning(binning[i]), i, 0);
+        store.setDetectorSettingsBinning(MetadataTools.getBinning(binning[i]), i, 0);
       }
     }
   }

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -61,6 +61,8 @@ public class PyramidTiffReader extends BaseTiffReader {
     suffixSufficient = false;
     suffixNecessary = false;
     equalStrips = true;
+    noSubresolutions = true;
+    canSeparateSeries = false;
   }
 
   // -- IFormatReader API methods --
@@ -86,6 +88,7 @@ public class PyramidTiffReader extends BaseTiffReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
     int index = getCoreIndex();
+    tiffParser.setAssumeEqualStrips(equalStrips);
     tiffParser.getSamples(ifds.get(index), buf, x, y, w, h);
     return buf;
   }
@@ -125,9 +128,10 @@ public class PyramidTiffReader extends BaseTiffReader {
 
     // repopulate core metadata
     core.clear();
+    core.add();
     for (int s=0; s<seriesCount; s++) {
       CoreMetadata ms = new CoreMetadata();
-      core.add(ms);
+      core.add(0, ms);
 
       if (s == 0) {
         ms.resolutionCount = seriesCount;

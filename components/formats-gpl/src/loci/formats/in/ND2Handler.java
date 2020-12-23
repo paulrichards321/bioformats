@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -27,12 +27,12 @@ package loci.formats.in;
 
 import java.util.ArrayList;
 import java.util.Hashtable;
-import java.util.List;
 
 import loci.common.DataTools;
 import loci.common.DateTools;
 import loci.common.xml.BaseHandler;
 import loci.formats.CoreMetadata;
+import loci.formats.CoreMetadataList;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
@@ -40,7 +40,6 @@ import loci.formats.meta.MetadataStore;
 
 import ome.units.UNITS;
 import ome.units.quantity.Length;
-import ome.xml.model.primitives.NonNegativeInteger;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,7 +65,7 @@ public class ND2Handler extends BaseHandler {
   private String prevElement = null;
 
   private Hashtable<String, Object> metadata = new Hashtable<String, Object>();
-  private List<CoreMetadata> core;
+  private CoreMetadataList core;
 
   private boolean isLossless;
   private ArrayList<Long> zs = new ArrayList<Long>();
@@ -115,15 +114,15 @@ public class ND2Handler extends BaseHandler {
 
   // -- Constructor --
 
-  public ND2Handler(List<CoreMetadata> core, int nImages) {
+  public ND2Handler(CoreMetadataList core, int nImages) {
     this(core, true, nImages);
   }
 
-  public ND2Handler(List<CoreMetadata> core, boolean populateXY, int nImages) {
+  public ND2Handler(CoreMetadataList core, boolean populateXY, int nImages) {
     super();
     this.populateXY = populateXY;
     this.nImages = nImages;
-    this.core = new ArrayList<CoreMetadata>(core);
+    this.core = new CoreMetadataList(core);
   }
 
   // -- ND2Handler API methods --
@@ -132,7 +131,7 @@ public class ND2Handler extends BaseHandler {
     return nXFields;
   }
 
-  public List<CoreMetadata> getCoreMetadataList() {
+  public CoreMetadataList getCoreMetadataList() {
     return core;
   }
 
@@ -151,7 +150,7 @@ public class ND2Handler extends BaseHandler {
 
         int fontSize = Integer.parseInt(roi.get("fHeight"));
         if (fontSize >= 0) {
-          store.setLabelFontSize(new Length(fontSize, UNITS.PT), r, 0);
+          store.setLabelFontSize(new Length(fontSize, UNITS.POINT), r, 0);
         }
         store.setLabelText(roi.get("eval-text"), r, 0);
         Length l = new Length(new Double(roi.get("line-width")), UNITS.PIXEL);
@@ -184,9 +183,9 @@ public class ND2Handler extends BaseHandler {
         segments = segments.replaceAll("\\[\\]", "");
         String[] points = segments.split("\\)");
 
-        StringBuffer sb = new StringBuffer();
+        final StringBuilder sb = new StringBuilder();
         for (int i=0; i<points.length; i++) {
-          points[i] = points[i].substring(points[i].indexOf(":") + 1);
+          points[i] = points[i].substring(points[i].indexOf(':') + 1);
           sb.append(points[i]);
           if (i < points.length - 1) sb.append(" ");
         }
@@ -360,7 +359,7 @@ public class ND2Handler extends BaseHandler {
     }
 
     String value = attributes.getValue("value");
-    CoreMetadata ms0 = core.get(0);
+    CoreMetadata ms0 = core.get(0, 0);
 
     try {
       if (qName.equals("uiWidth")) {
@@ -421,7 +420,7 @@ public class ND2Handler extends BaseHandler {
           ms0.sizeT = v;
         }
         else if (qName.equals("no_name") && v > 1 && core.size() == 1) {
-          core = new ArrayList<CoreMetadata>();
+          core = new CoreMetadataList();
           for (int q=0; q<v; q++) {
             core.add(ms0);
           }
@@ -494,7 +493,7 @@ public class ND2Handler extends BaseHandler {
           LOGGER.warn("Could not set the pixel type", e);
         }
       }
-      else if (qName.equals("uiWidthBytes") || qName.startsWith("uiBpc")) {
+      else if (qName.equals("uiWidthBytes") || qName.startsWith("uiBpcInMemory") || qName.startsWith("uiBpcSignificant")) {
         int div = qName.equals("uiWidthBytes") ? ms0.sizeX : 8;
         if (div > 0) {
           int bits = Integer.parseInt(value);
@@ -511,22 +510,22 @@ public class ND2Handler extends BaseHandler {
         }
       }
       else if ("dPosX".equals(prevElement) && qName.startsWith("item_")) {
-        final Double number = Double.valueOf(DataTools.sanitizeDouble(value));
+        final Double number = DataTools.parseDouble(value);
         posX.add(new Length(number, UNITS.REFERENCEFRAME));
         metadata.put("X position for position #" + posX.size(), value);
       }
       else if ("dPosY".equals(prevElement) && qName.startsWith("item_")) {
-        final Double number = Double.valueOf(DataTools.sanitizeDouble(value));
+        final Double number = DataTools.parseDouble(value);
         posY.add(new Length(number, UNITS.REFERENCEFRAME));
         metadata.put("Y position for position #" + posY.size(), value);
       }
       else if ("dPosZ".equals(prevElement) && qName.startsWith("item_")) {
-        final Double number = Double.valueOf(DataTools.sanitizeDouble(value));
+        final Double number = DataTools.parseDouble(value);
         posZ.add(new Length(number, UNITS.REFERENCEFRAME));
         metadata.put("Z position for position #" + posZ.size(), value);
       }
       else if (qName.startsWith("item_")) {
-        int v = Integer.parseInt(qName.substring(qName.indexOf("_") + 1));
+        int v = Integer.parseInt(qName.substring(qName.indexOf('_') + 1));
         if (v == numSeries) {
           numSeries++;
         }
@@ -563,7 +562,7 @@ public class ND2Handler extends BaseHandler {
         rois.add(roi);
       }
       else if (qName.equals("dPinholeRadius")) {
-        pinholeSize = new Double(DataTools.sanitizeDouble(value));
+        pinholeSize = DataTools.parseDouble(value);
         metadata.put("Pinhole size", value);
       }
       else if (qName.endsWith("ChannelColor")) {
@@ -605,7 +604,7 @@ public class ND2Handler extends BaseHandler {
         metadata.put(qName, value);
       }
       else {
-        StringBuffer sb = new StringBuffer();
+        final StringBuilder sb = new StringBuilder();
         if (prefix != null) {
           sb.append(prefix);
           sb.append(" ");
@@ -632,7 +631,7 @@ public class ND2Handler extends BaseHandler {
     if (nXFields > 0 && nXFields < 10 && nYFields > 0 && nYFields < 10 &&
       populateXY)
     {
-      CoreMetadata ms0 = core.get(0);
+      CoreMetadata ms0 = core.get(0, 0);
       ms0.sizeX *= nXFields;
       ms0.sizeY *= nYFields;
     }
@@ -642,34 +641,32 @@ public class ND2Handler extends BaseHandler {
 
   public void parseKeyAndValue(String key, String value, String runtype) {
     if (key == null || value == null) return;
-    CoreMetadata ms0 = core.get(0);
+    CoreMetadata ms0 = core.get(0, 0);
     metadata.put(key, value);
 
     try {
       if (key.endsWith("dCalibration")) {
-        pixelSizeX = Double.parseDouble(DataTools.sanitizeDouble(value));
+        pixelSizeX = DataTools.parseDouble(value);
         pixelSizeY = pixelSizeX;
       }
       else if (key.endsWith("dZStep")) {
-        pixelSizeZ = Double.parseDouble(DataTools.sanitizeDouble(value));
+        pixelSizeZ =  DataTools.parseDouble(value);
       }
       else if (key.endsWith("Gain")) {
-        value = DataTools.sanitizeDouble(value);
-        if (!value.equals("")) {
-          gain.add(new Double(value));
-        }
+        Double gainValue = DataTools.parseDouble(value);
+        if (gainValue != null) gain.add(gainValue);
       }
       else if (key.endsWith("dLampVoltage")) {
-        voltage = new Double(DataTools.sanitizeDouble(value));
+        voltage = DataTools.parseDouble(value);
       }
       else if (key.endsWith("dObjectiveMag") && mag == null) {
-        mag = new Double(DataTools.sanitizeDouble(value));
+        mag = DataTools.parseDouble(value);
       }
       else if (key.endsWith("dObjectiveNA")) {
-        na = new Double(DataTools.sanitizeDouble(value));
+        na = DataTools.parseDouble(value);
       }
       else if (key.endsWith("dRefractIndex1")) {
-        refractiveIndex = new Double(DataTools.sanitizeDouble(value));
+        refractiveIndex = DataTools.parseDouble(value);
       }
       else if (key.equals("sObjective") || key.equals("wsObjectiveName") ||
         key.equals("sOptics"))
@@ -677,45 +674,40 @@ public class ND2Handler extends BaseHandler {
         String[] tokens = value.split(" ");
         int magIndex = -1;
         for (int i=0; i<tokens.length; i++) {
-          if (tokens[i].indexOf("x") != -1) {
+          if (tokens[i].indexOf('x') != -1) {
             magIndex = i;
             break;
           }
         }
-        StringBuffer s = new StringBuffer();
+        final StringBuilder s = new StringBuilder();
         for (int i=0; i<magIndex; i++) {
           s.append(tokens[i]);
         }
         correction = s.toString();
         if (magIndex >= 0) {
           String m =
-            tokens[magIndex].substring(0, tokens[magIndex].indexOf("x"));
-          m = DataTools.sanitizeDouble(m);
-          if (m.length() > 0) {
-            mag = new Double(m);
-          }
+            tokens[magIndex].substring(0, tokens[magIndex].indexOf('x'));
+          mag = DataTools.parseDouble(m);
         }
         if (magIndex + 1 < tokens.length) immersion = tokens[magIndex + 1];
       }
       else if (key.endsWith("dTimeMSec")) {
-        long v = (long) Double.parseDouble(DataTools.sanitizeDouble(value));
-        if (!ts.contains(new Long(v))) {
-          ts.add(new Long(v));
+        Long v = DataTools.parseDouble(value).longValue();
+        if (!ts.contains(v)) {
+          ts.add(v);
           metadata.put("number of timepoints", ts.size());
         }
       }
       else if (key.endsWith("dZPos")) {
-        long v = (long) Double.parseDouble(DataTools.sanitizeDouble(value));
-        if (!zs.contains(new Long(v))) {
-          zs.add(new Long(v));
-        }
+        Long v = DataTools.parseLong(value);
+        if (!zs.contains(v)) zs.add(v);
       }
       else if (key.endsWith("uiCount")) {
         if (runtype != null) {
           if (runtype.endsWith("ZStackLoop")) {
             if (ms0.sizeZ == 0) {
               ms0.sizeZ = Integer.parseInt(value);
-              if (ms0.dimensionOrder.indexOf("Z") == -1) {
+              if (ms0.dimensionOrder.indexOf('Z') == -1) {
                 ms0.dimensionOrder = "Z" + ms0.dimensionOrder;
               }
             }
@@ -723,14 +715,14 @@ public class ND2Handler extends BaseHandler {
           else if (runtype.endsWith("TimeLoop")) {
             if (ms0.sizeT == 0) {
               ms0.sizeT = Integer.parseInt(value);
-              if (ms0.dimensionOrder.indexOf("T") == -1) {
+              if (ms0.dimensionOrder.indexOf('T') == -1) {
                 ms0.dimensionOrder = "T" + ms0.dimensionOrder;
               }
             }
           }
           else if (runtype.endsWith("XYPosLoop") && core.size() == 1) {
             int len = Integer.parseInt(value);
-            core = new ArrayList<CoreMetadata>();
+            core = new CoreMetadataList();
             for (int i=0; i<len; i++) {
               core.add(ms0);
             }
@@ -743,7 +735,7 @@ public class ND2Handler extends BaseHandler {
       else if (key.equals("VirtualComponents")) {
         if (ms0.sizeC == 0) {
           ms0.sizeC = Integer.parseInt(value);
-          if (ms0.dimensionOrder.indexOf("C") == -1) {
+          if (ms0.dimensionOrder.indexOf('C') == -1) {
             ms0.dimensionOrder += "C" + ms0.dimensionOrder;
           }
         }
@@ -766,7 +758,7 @@ public class ND2Handler extends BaseHandler {
             parseKeyAndValue(v[0].trim(), v[1].trim(), runtype);
           }
           else if (v[0].equals("Line")) {
-            parseKeyAndValue(v[0], t.substring(t.indexOf(":") + 1).trim(), runtype);
+            parseKeyAndValue(v[0], t.substring(t.indexOf(':') + 1).trim(), runtype);
           }
           else if (v.length > 1) {
             v[0] = v[0].replace('{', ' ');
@@ -798,7 +790,7 @@ public class ND2Handler extends BaseHandler {
               int tSize = ms0.sizeT;
               int c = ms0.sizeC;
               String order = ms0.dimensionOrder;
-              core = new ArrayList<CoreMetadata>();
+              core = new CoreMetadataList();
               for (int i=0; i<numSeries; i++) {
                 CoreMetadata ms = new CoreMetadata();
                 core.add(ms);
@@ -809,7 +801,7 @@ public class ND2Handler extends BaseHandler {
                 ms.sizeT = tSize == 0 ? 1 : tSize;
                 ms.dimensionOrder = order;
               }
-              ms0 = core.get(0);
+              ms0 = core.get(0, 0);
             }
           }
           else if (dim.startsWith("T")) {
@@ -847,17 +839,20 @@ public class ND2Handler extends BaseHandler {
       else if (key.equals("Readout Speed")) {
         int last = value.lastIndexOf(" ");
         if (last != -1) value = value.substring(0, last);
-        speed.add(new Double(DataTools.sanitizeDouble(value)));
+        speed.add(DataTools.parseDouble(value));
       }
       else if (key.equals("Temperature")) {
         String temp = value.replaceAll("[\\D&&[^-.]]", "");
-        temperature.add(new Double(DataTools.sanitizeDouble(temp)));
+        temperature.add(DataTools.parseDouble(temp));
       }
-      else if (key.equals("Exposure")) {
+      // exposure times are often defined once in a PropertiesFast block,
+      // and again in a PropertiesQuality block
+      else if (key.equals("Exposure") &&
+        (prevElement == null || "no_name".equals(prevElement) || "PropertiesQuality".equals(prevElement)))
+      {
         String[] s = value.trim().split(" ");
-        s[0] = DataTools.sanitizeDouble(s[0]);
-        if (s[0].trim().length() > 0) {
-          double time = Double.parseDouble(s[0]);
+        Double time = DataTools.parseDouble(s[0]);
+        if (time != null) {
           // TODO: check for other units
           if (s.length > 1) {
             if (s[1].equals("ms")) time /= 1000;
@@ -866,29 +861,21 @@ public class ND2Handler extends BaseHandler {
             // assume time is in milliseconds
             time /= 1000;
           }
-          exposureTime.add(new Double(time));
+          exposureTime.add(time);
         }
       }
       else if (key.equals("{Pinhole Size}")) {
-        pinholeSize = new Double(DataTools.sanitizeDouble(value));
+        pinholeSize = DataTools.parseDouble(value);
         metadata.put("Pinhole size", value);
       }
       else if (key.startsWith("- Step")) {
-        int space = key.indexOf(" ", key.indexOf("Step") + 1);
-        int last = key.indexOf(" ", space + 1);
-        if (last == -1) last = key.length();
-        try {
-          pixelSizeZ = Double.parseDouble(
-            DataTools.sanitizeDouble(key.substring(space, last)));
-        }
-        catch (Exception e) {
-          LOGGER.trace("Could not parse Z step '{}'", key, e);
-        }
+        Double step = parsePixelsSizeZFromKey(key);
+        if (step != null) pixelSizeZ = step;
       }
       else if (key.equals("Line")) {
         String[] values = value.split(";");
         for (int q=0; q<values.length; q++) {
-          int colon = values[q].indexOf(":");
+          int colon = values[q].indexOf(':');
           if (colon < 0) continue;
           String nextKey = values[q].substring(0, colon).trim();
           String nextValue = values[q].substring(colon + 1).trim();
@@ -904,8 +891,7 @@ public class ND2Handler extends BaseHandler {
         exWave.add(new Double(v[0]));
       }
       else if (key.equals("Power")) {
-        value = DataTools.sanitizeDouble(value);
-        power.add(new Integer((int) Double.parseDouble(value)));
+        power.add(DataTools.parseDouble(value).intValue());
       }
       else if (key.equals("CameraUniqueName")) {
         cameraModel = value;
@@ -922,18 +908,18 @@ public class ND2Handler extends BaseHandler {
       else if (key.equals("Z Stack Loop")) {
         int v = Integer.parseInt(value);
         if (v <= nImages || nImages <= 0) {
-          core.get(0).sizeZ = v;
+          core.get(0, 0).sizeZ = v;
         }
       }
       else if (key.equals("Time Loop")) {
         int v = Integer.parseInt(value);
         if (v <= nImages && firstTimeLoop) {
-          core.get(0).sizeT = v;
+          core.get(0, 0).sizeT = v;
           firstTimeLoop = false;
         }
       }
     }
-    catch (NumberFormatException exc) {
+    catch (NumberFormatException | NullPointerException exc) {
       LOGGER.warn("Could not parse {} value: {}", key, value);
     }
   }
@@ -950,4 +936,16 @@ public class ND2Handler extends BaseHandler {
      return key.startsWith("Dimensions") || key.startsWith("Abmessungen");
   }
 
+  /**
+   * Parses the physical size from a key.
+   * The expected format for the key is "- Step <value>".
+   */
+  private Double parsePixelsSizeZFromKey(String key) {
+    int space = key.indexOf(' ', key.indexOf("Step") + 1);
+    if (space == -1) return null;
+
+    int last = key.indexOf(' ', space + 1);
+    if (last == -1) last = key.length();
+    return DataTools.parseDouble(key.substring(space, last).trim());
+  }
 }

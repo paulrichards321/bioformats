@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -27,7 +27,8 @@ package loci.formats.in;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.Vector;
+import java.util.ArrayList;
+import java.util.List;
 
 import loci.common.DataTools;
 import loci.common.Location;
@@ -56,7 +57,7 @@ public class VisitechReader extends FormatReader {
   // -- Fields --
 
   /** Files in this dataset. */
-  private Vector<String> files;
+  private List<String> files;
 
   private long[] pixelOffsets;
 
@@ -91,7 +92,7 @@ public class VisitechReader extends FormatReader {
     if (checkSuffix(name, "xys")) return true;
 
     // verify that there is an .xys file in the same directory
-    if (name.indexOf(" ") == -1) return false;
+    if (name.indexOf(' ') == -1) return false;
     if (!open) return false;
     String prefix = name.substring(0, name.lastIndexOf(" "));
     Location xys = new Location(prefix + " 1.xys");
@@ -124,18 +125,18 @@ public class VisitechReader extends FormatReader {
     }
 
     String file = files.get(fileIndex);
-    RandomAccessInputStream s = new RandomAccessInputStream(file);
-    s.order(isLittleEndian());
-    s.seek(pixelOffsets[fileIndex]);
+    try (RandomAccessInputStream s = new RandomAccessInputStream(file)) {
+      s.order(isLittleEndian());
+      s.seek(pixelOffsets[fileIndex]);
 
-    int paddingBytes =
-      (int) (s.length() - s.getFilePointer() - div * plane) / (div - 1);
-    if (planeIndex > 0) {
-      s.skipBytes((plane + paddingBytes) * planeIndex);
+      long paddingBytes =
+        (s.length() - s.getFilePointer() - div * plane) / (div - 1);
+      if (planeIndex > 0) {
+        s.skipBytes((plane + paddingBytes) * planeIndex);
+      }
+
+      readPlane(s, x, y, w, h, buf);
     }
-
-    readPlane(s, x, y, w, h, buf);
-    s.close();
     return buf;
   }
 
@@ -143,7 +144,7 @@ public class VisitechReader extends FormatReader {
   @Override
   public String[] getSeriesUsedFiles(boolean noPixels) {
     FormatTools.assertId(currentId, true, 1);
-    Vector<String> v = new Vector<String>();
+    final List<String> v = new ArrayList<String>();
     v.add(currentId);
     if (!noPixels && files != null) {
       int nFiles = getSizeC();
@@ -208,7 +209,7 @@ public class VisitechReader extends FormatReader {
         token.indexOf("pixels") != -1)
       {
         token = token.replaceAll("<.*?>", "");
-        int ndx = token.indexOf(":");
+        int ndx = token.indexOf(':');
 
         if (ndx != -1) {
           key = token.substring(0, ndx).trim();
@@ -225,7 +226,7 @@ public class VisitechReader extends FormatReader {
               FormatTools.pixelTypeFromBytes(bits, false, false);
           }
           else if (key.equals("Image dimensions")) {
-            int n = value.indexOf(",");
+            int n = value.indexOf(',');
             ms0.sizeX = Integer.parseInt(value.substring(1, n).trim());
             ms0.sizeY = Integer.parseInt(value.substring(n + 1,
               value.length() - 1).trim());
@@ -242,10 +243,10 @@ public class VisitechReader extends FormatReader {
         if (token.indexOf("pixels") != -1) {
           ms0.sizeC++;
           ms0.imageCount +=
-            Integer.parseInt(token.substring(0, token.indexOf(" ")));
+            Integer.parseInt(token.substring(0, token.indexOf(' ')));
         }
         else if (token.startsWith("Time Series")) {
-          int idx = token.indexOf(";") + 1;
+          int idx = token.indexOf(';') + 1;
           String ss = token.substring(idx, token.indexOf(" ", idx)).trim();
           ms0.sizeT = Integer.parseInt(ss);
         }
@@ -267,7 +268,7 @@ public class VisitechReader extends FormatReader {
 
     // find pixels files - we think there is one channel per file
 
-    files = new Vector<String>();
+    files = new ArrayList<String>();
 
     int ndx = currentId.lastIndexOf(File.separator) + 1;
     String base = currentId.substring(ndx, currentId.lastIndexOf(" "));
@@ -347,21 +348,23 @@ public class VisitechReader extends FormatReader {
 
   private long findPixelsOffset(int fileIndex) throws IOException {
     String file = files.get(fileIndex);
-    RandomAccessInputStream s = new RandomAccessInputStream(file);
-    s.order(isLittleEndian());
-    s.findString(false, HEADER_MARKER);
+    long fp = 0;
+    try (RandomAccessInputStream s = new RandomAccessInputStream(file)) {
+      s.order(isLittleEndian());
+      s.findString(false, HEADER_MARKER);
 
-    int plane = FormatTools.getPlaneSize(this);
-    int planeCount = getSizeZ() * getSizeT();
+      int plane = FormatTools.getPlaneSize(this);
+      int planeCount = getSizeZ() * getSizeT();
 
-    long skip =
-      (s.length() - s.getFilePointer() - (planeCount * plane)) / planeCount;
-    long fp = s.getFilePointer() + skip - HEADER_MARKER.length();
-    s.seek(fp);
-    if (s.readByte() == PIXELS_MARKER[PIXELS_MARKER.length - 1]) {
-      fp++;
+      long skip =
+        (s.length() - s.getFilePointer() - (planeCount * plane)) / planeCount;
+      fp = s.getFilePointer() + skip - HEADER_MARKER.length();
+      s.seek(fp);
+      if (s.readByte() == PIXELS_MARKER[PIXELS_MARKER.length - 1]) {
+        fp++;
+      }
     }
-    s.close();
+
     return fp;
   }
 

@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -54,8 +54,6 @@ import loci.formats.tiff.TiffParser;
 import ome.xml.model.enums.Correction;
 import ome.xml.model.enums.Immersion;
 import ome.xml.model.primitives.Color;
-import ome.xml.model.primitives.PositiveFloat;
-import ome.xml.model.primitives.PositiveInteger;
 import ome.xml.model.primitives.Timestamp;
 
 import ome.units.quantity.ElectricPotential;
@@ -192,13 +190,13 @@ public class LeicaReader extends FormatReader {
 
     // check for that there is an .lei file in the same directory
     String prefix = name;
-    if (prefix.indexOf(".") != -1) {
+    if (prefix.indexOf('.') != -1) {
       prefix = prefix.substring(0, prefix.lastIndexOf("."));
     }
     Location lei = new Location(prefix + ".lei");
     if (!lei.exists()) {
       lei = new Location(prefix + ".LEI");
-      while (!lei.exists() && prefix.indexOf("_") != -1) {
+      while (!lei.exists() && prefix.indexOf('_') != -1) {
         prefix = prefix.substring(0, prefix.lastIndexOf("_"));
         lei = new Location(prefix + ".lei");
         if (!lei.exists()) lei = new Location(prefix + ".LEI");
@@ -279,10 +277,10 @@ public class LeicaReader extends FormatReader {
         return tiff.openBytes(planeIndex, buf, x, y, w, h);
       }
       else {
-        RandomAccessInputStream s = new RandomAccessInputStream(filename);
-        s.seek(planeIndex * FormatTools.getPlaneSize(this));
-        readPlane(s, x, y, w, h, buf);
-        s.close();
+        try (RandomAccessInputStream s = new RandomAccessInputStream(filename)) {
+          s.seek(planeIndex * FormatTools.getPlaneSize(this));
+          readPlane(s, x, y, w, h, buf);
+        }
       }
     }
 
@@ -603,8 +601,7 @@ public class LeicaReader extends FormatReader {
       String filename = (String) files[i].get(0);
 
       if (checkSuffix(filename, TiffReader.TIFF_SUFFIXES)) {
-        RandomAccessInputStream s = new RandomAccessInputStream(filename, 16);
-        try {
+        try (RandomAccessInputStream s = new RandomAccessInputStream(filename, 16)) {
           TiffParser parser = new TiffParser(s);
           parser.setDoCaching(false);
           IFD firstIFD = parser.getFirstIFD();
@@ -627,9 +624,6 @@ public class LeicaReader extends FormatReader {
 
           tileWidth[i] = (int) firstIFD.getTileWidth();
           tileHeight[i] = (int) firstIFD.getTileLength();
-        }
-        finally {
-          s.close();
         }
       }
       else {
@@ -745,16 +739,16 @@ public class LeicaReader extends FormatReader {
         store.setPixelsPhysicalSizeZ(sizeZ, i);
       }
       if ((int) physicalSizes[i][4] > 0) {
-        store.setPixelsTimeIncrement(new Time(physicalSizes[i][4], UNITS.S), i);
+        store.setPixelsTimeIncrement(new Time(physicalSizes[i][4], UNITS.SECOND), i);
       }
 
       for (int j=0; j<ms.imageCount; j++) {
         if (timestamps[i] != null && j < timestamps[i].length) {
           long time = DateTools.getTime(timestamps[i][j], DATE_FORMAT, ":");
           double elapsedTime = (double) (time - firstPlane) / 1000;
-          store.setPlaneDeltaT(new Time(elapsedTime, UNITS.S), i, j);
+          store.setPlaneDeltaT(new Time(elapsedTime, UNITS.SECOND), i, j);
           if (exposureTime[i] > 0) {
-            store.setPlaneExposureTime(new Time(exposureTime[i], UNITS.S), i, j);
+            store.setPlaneExposureTime(new Time(exposureTime[i], UNITS.SECOND), i, j);
           }
         }
       }
@@ -786,7 +780,7 @@ public class LeicaReader extends FormatReader {
 
       // open the TIFF file and look for the "Image Description" field
 
-      ifds = tp.getIFDs();
+      ifds = tp.getMainIFDs();
       if (ifds == null) throw new FormatException("No IFDs found");
       String descr = ifds.get(0).getComment();
 
@@ -799,18 +793,22 @@ public class LeicaReader extends FormatReader {
 
       String lei =
         baseFile.substring(0, baseFile.lastIndexOf(File.separator) + 1);
+      StringBuilder suffix = new StringBuilder();
 
       StringTokenizer lines = new StringTokenizer(descr, "\n");
       String line = null, key = null, value = null;
       while (lines.hasMoreTokens()) {
         line = lines.nextToken();
-        if (line.indexOf("=") == -1) continue;
-        key = line.substring(0, line.indexOf("=")).trim();
-        value = line.substring(line.indexOf("=") + 1).trim();
+        if (line.indexOf('=') == -1) continue;
+        key = line.substring(0, line.indexOf('=')).trim();
+        value = line.substring(line.indexOf('=') + 1).trim();
         addGlobalMeta(key, value);
 
-        if (key.startsWith("Series Name")) lei += value;
+        if (key.startsWith("Series Name")) {
+          suffix.append(value);
+        }
       }
+      lei += suffix.toString();
 
       // now open the LEI file
 
@@ -843,13 +841,13 @@ public class LeicaReader extends FormatReader {
     else if (checkSuffix(baseFile, "raw") && isGroupFiles()) {
       // check for that there is an .lei file in the same directory
       String prefix = baseFile;
-      if (prefix.indexOf(".") != -1) {
+      if (prefix.indexOf('.') != -1) {
         prefix = prefix.substring(0, prefix.lastIndexOf("."));
       }
       Location lei = new Location(prefix + ".lei");
       if (!lei.exists()) {
         lei = new Location(prefix + ".LEI");
-        while (!lei.exists() && prefix.indexOf("_") != -1) {
+        while (!lei.exists() && prefix.indexOf('_') != -1) {
           prefix = prefix.substring(0, prefix.lastIndexOf("_"));
           lei = new Location(prefix + ".lei");
           if (!lei.exists()) lei = new Location(prefix + ".LEI");
@@ -1035,12 +1033,12 @@ public class LeicaReader extends FormatReader {
 
     String name = getString(fileLength * 2);
 
-    if (name.indexOf(".") != -1) {
+    if (name.indexOf('.') != -1) {
       name = name.substring(0, name.lastIndexOf("."));
     }
 
     String[] tokens = name.split("_");
-    StringBuffer buf = new StringBuffer();
+    final StringBuilder buf = new StringBuilder();
     for (int p=1; p<tokens.length; p++) {
       String lcase = tokens[p].toLowerCase();
       if (!lcase.startsWith("ch0") && !lcase.startsWith("c0") &&
@@ -1081,7 +1079,7 @@ public class LeicaReader extends FormatReader {
     addSeriesMeta("Maximum voxel intensity", getString(true));
     addSeriesMeta("Minimum voxel intensity", getString(true));
     int len = in.readInt();
-    in.skipBytes(len * 2 + 4);
+    in.skipBytes((long) len * 2 + 4);
 
     len = in.readInt();
     for (int j=0; j<len; j++) {
@@ -1113,22 +1111,22 @@ public class LeicaReader extends FormatReader {
       else if (dimType.equals("channel")) {
         if (getSizeC() == 0) ms.sizeC = 1;
         ms.sizeC *= size;
-        if (getDimensionOrder().indexOf("C") == -1) {
-          ms.dimensionOrder += "C";
+        if (getDimensionOrder().indexOf('C') == -1) {
+          ms.dimensionOrder += 'C';
         }
         physicalSizes[seriesIndex][3] = physical;
       }
       else if (dimType.equals("z")) {
         ms.sizeZ = size;
-        if (getDimensionOrder().indexOf("Z") == -1) {
-          ms.dimensionOrder += "Z";
+        if (getDimensionOrder().indexOf('Z') == -1) {
+          ms.dimensionOrder += 'Z';
         }
         physicalSizes[seriesIndex][2] = physical;
       }
       else {
         ms.sizeT = size;
-        if (getDimensionOrder().indexOf("T") == -1) {
-          ms.dimensionOrder += "T";
+        if (getDimensionOrder().indexOf('T') == -1) {
+          ms.dimensionOrder += 'T';
         }
         physicalSizes[seriesIndex][4] = physical;
       }
@@ -1349,7 +1347,7 @@ public class LeicaReader extends FormatReader {
             else if (tokens[2].equals("State")) {
               detector.active = data.equals("Active");
 
-              String index = tokens[1].substring(tokens[1].indexOf(" ") + 1);
+              String index = tokens[1].substring(tokens[1].indexOf(' ') + 1);
               detector.index = -1;
               try {
                 detector.index = Integer.parseInt(index) - 1;
@@ -1375,14 +1373,14 @@ public class LeicaReader extends FormatReader {
         }
         else if (tokens[2].equals("Objective")) {
           String[] objectiveData = data.split(" ");
-          StringBuffer model = new StringBuffer();
+          final StringBuilder model = new StringBuilder();
           String mag = null, na = null;
           String immersion = null, correction = null;
           for (int i=0; i<objectiveData.length; i++) {
-            if (objectiveData[i].indexOf("x") != -1 && mag == null &&
+            if (objectiveData[i].indexOf('x') != -1 && mag == null &&
               na == null)
             {
-              int xIndex = objectiveData[i].indexOf("x");
+              int xIndex = objectiveData[i].indexOf('x');
               mag = objectiveData[i].substring(0, xIndex).trim();
               na = objectiveData[i].substring(xIndex + 1).trim();
             }
@@ -1401,10 +1399,10 @@ public class LeicaReader extends FormatReader {
           if (immersion != null) immersion = immersion.trim();
           if (correction != null) correction = correction.trim();
 
-          Correction realCorrection = getCorrection(correction);
-          Correction testCorrection = getCorrection(immersion);
-          Immersion realImmersion = getImmersion(immersion);
-          Immersion testImmersion = getImmersion(correction);
+          Correction realCorrection = MetadataTools.getCorrection(correction);
+          Correction testCorrection = MetadataTools.getCorrection(immersion);
+          Immersion realImmersion = MetadataTools.getImmersion(immersion);
+          Immersion testImmersion = MetadataTools.getImmersion(correction);
 
           // Correction and Immersion are reversed
           if ((testCorrection != Correction.OTHER &&
@@ -1418,9 +1416,9 @@ public class LeicaReader extends FormatReader {
           }
 
           store.setObjectiveImmersion(
-            getImmersion(immersion), series, objective);
+            MetadataTools.getImmersion(immersion), series, objective);
           store.setObjectiveCorrection(
-            getCorrection(correction), series, objective);
+            MetadataTools.getCorrection(correction), series, objective);
           store.setObjectiveModel(model.toString().trim(), series, objective);
           store.setObjectiveLensNA(new Double(na), series, objective);
 
@@ -1560,9 +1558,9 @@ public class LeicaReader extends FormatReader {
       if (detector.active) {
         store.setDetectorOffset(detector.offset, series, nextDetector);
         store.setDetectorVoltage(
-                new ElectricPotential(detector.voltage, UNITS.V), series,
+                new ElectricPotential(detector.voltage, UNITS.VOLT), series,
                 nextDetector);
-        store.setDetectorType(getDetectorType("PMT"), series, nextDetector);
+        store.setDetectorType(MetadataTools.getDetectorType("PMT"), series, nextDetector);
 
         String detectorID =
           MetadataTools.createLSID("Detector", series, nextDetector);
@@ -1625,7 +1623,7 @@ public class LeicaReader extends FormatReader {
           }
         }
         if (i < pinhole.length) {
-          store.setChannelPinholeSize(new Length(pinhole[i], UNITS.MICROM), i, channel);
+          store.setChannelPinholeSize(new Length(pinhole[i], UNITS.MICROMETER), i, channel);
         }
         if (channel < channelColor[i].length) {
           store.setChannelColor(channelColor[i][channel], i, channel);

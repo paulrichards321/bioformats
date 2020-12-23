@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -26,10 +26,10 @@
 package loci.formats.in;
 
 import java.io.IOException;
-import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.Vector;
+import java.util.List;
 
 import loci.common.DataTools;
 import loci.common.DateTools;
@@ -48,7 +48,6 @@ import loci.formats.tiff.IFD;
 import loci.formats.tiff.IFDList;
 import loci.formats.tiff.TiffParser;
 
-import ome.xml.model.primitives.PositiveFloat;
 import ome.units.quantity.Length;
 
 /**
@@ -71,7 +70,7 @@ public class TCSReader extends FormatReader {
   // -- Fields --
 
   /** List of TIFF files. */
-  private Vector<String> tiffs;
+  private List<String> tiffs;
 
   /** Helper readers. */
   private TiffReader[] tiffReaders;
@@ -115,24 +114,21 @@ public class TCSReader extends FormatReader {
 
     // check that there is no LEI file
     String prefix = name;
-    if (prefix.indexOf(".") != -1) {
+    if (prefix.indexOf('.') != -1) {
       prefix = prefix.substring(0, prefix.lastIndexOf("."));
     }
     Location lei = new Location(prefix + ".lei");
     if (!lei.exists()) {
       lei = new Location(prefix + ".LEI");
-      while (!lei.exists() && prefix.indexOf("_") != -1) {
+      while (!lei.exists() && prefix.indexOf('_') != -1) {
         prefix = prefix.substring(0, prefix.lastIndexOf("_"));
         lei = new Location(prefix + ".lei");
         if (!lei.exists()) lei = new Location(prefix + ".LEI");
       }
     }
     if (lei.exists()) return false;
-    try {
-      RandomAccessInputStream s = new RandomAccessInputStream(name);
-      boolean isThisType = isThisType(s);
-      s.close();
-      return isThisType;
+    try (RandomAccessInputStream s = new RandomAccessInputStream(name)) {
+      return isThisType(s);
     }
     catch (IOException e) {
       LOGGER.debug("", e);
@@ -215,7 +211,7 @@ public class TCSReader extends FormatReader {
     if (noPixels) {
       return xmlFile == null ? null : new String[] {xmlFile};
     }
-    Vector<String> v = new Vector<String>();
+    final List<String> v = new ArrayList<String>();
     v.addAll(tiffs);
     if (xmlFile != null) v.add(xmlFile);
     return v.toArray(new String[v.size()]);
@@ -273,9 +269,9 @@ public class TCSReader extends FormatReader {
 
     in = new RandomAccessInputStream(id, 16);
     tiffParser = new TiffParser(in);
-    tiffs = new Vector<String>();
+    tiffs = new ArrayList<String>();
 
-    IFDList ifds = tiffParser.getIFDs();
+    IFDList ifds = tiffParser.getMainIFDs();
     String date = ifds.get(0).getIFDStringValue(IFD.DATE_TIME);
     if (date != null) {
       datestamp = DateTools.getTime(date, "yyyy:MM:dd HH:mm:ss");
@@ -314,14 +310,14 @@ public class TCSReader extends FormatReader {
 
         for (int i=axisTypes.length-1; i>=0; i--) {
           if (axisTypes[i] == AxisGuesser.Z_AXIS) {
-            if (getDimensionOrder().indexOf("Z") == -1) {
-              ms0.dimensionOrder += "Z";
+            if (getDimensionOrder().indexOf('Z') == -1) {
+              ms0.dimensionOrder += 'Z';
             }
             ms0.sizeZ *= count[i];
           }
           else if (axisTypes[i] == AxisGuesser.C_AXIS) {
-            if (getDimensionOrder().indexOf("C") == -1) {
-              ms0.dimensionOrder += "C";
+            if (getDimensionOrder().indexOf('C') == -1) {
+              ms0.dimensionOrder += 'C';
             }
             ms0.sizeC *= count[i];
           }
@@ -362,24 +358,24 @@ public class TCSReader extends FormatReader {
       }
       if (unique) {
         ms0.sizeT++;
-        if (getDimensionOrder().indexOf("T") < 0) {
-          ms0.dimensionOrder += "T";
+        if (getDimensionOrder().indexOf('T') < 0) {
+          ms0.dimensionOrder += 'T';
         }
       }
       else if (i > 0) {
-        if ((ch[i] != ch[i - 1]) && getDimensionOrder().indexOf("C") < 0) {
-          ms0.dimensionOrder += "C";
+        if ((ch[i] != ch[i - 1]) && getDimensionOrder().indexOf('C') < 0) {
+          ms0.dimensionOrder += 'C';
         }
-        else if (getDimensionOrder().indexOf("Z") < 0) {
-          ms0.dimensionOrder += "Z";
+        else if (getDimensionOrder().indexOf('Z') < 0) {
+          ms0.dimensionOrder += 'Z';
         }
       }
       unique = true;
     }
 
-    if (getDimensionOrder().indexOf("Z") < 0) ms0.dimensionOrder += "Z";
-    if (getDimensionOrder().indexOf("C") < 0) ms0.dimensionOrder += "C";
-    if (getDimensionOrder().indexOf("T") < 0) ms0.dimensionOrder += "T";
+    if (getDimensionOrder().indexOf('Z') < 0) ms0.dimensionOrder += 'Z';
+    if (getDimensionOrder().indexOf('C') < 0) ms0.dimensionOrder += 'C';
+    if (getDimensionOrder().indexOf('T') < 0) ms0.dimensionOrder += 'T';
 
     if (getSizeC() == 0) ms0.sizeC = 1;
     if (getSizeT() == 0) ms0.sizeT = 1;
@@ -399,7 +395,7 @@ public class TCSReader extends FormatReader {
       String[] lines = comment.split("\n");
       for (String line : lines) {
         if (!line.startsWith("[")) {
-          int eq = line.indexOf("=");
+          int eq = line.indexOf('=');
           if (eq < 0) continue;
           String key = line.substring(0, eq).trim();
           String value = line.substring(eq + 1).trim();
@@ -535,13 +531,15 @@ public class TCSReader extends FormatReader {
 
     HashMap<String, Long> timestamps = new HashMap<String, Long>();
 
-    RandomAccessInputStream s =
-      new RandomAccessInputStream(current.getAbsolutePath(), 16);
-    TiffParser p = new TiffParser(s);
-    IFD ifd = p.getIFDs().get(0);
-    s.close();
+    IFD ifd = null;
+    int expectedIFDCount = 0;
+    try (RandomAccessInputStream s =
+      new RandomAccessInputStream(current.getAbsolutePath(), 16)) {
+        TiffParser p = new TiffParser(s);
+        ifd = p.getMainIFDs().get(0);
+        expectedIFDCount = p.getMainIFDs().size();
+    }
 
-    int expectedIFDCount = p.getIFDs().size();
     long width = ifd.getImageWidth();
     long height = ifd.getImageLength();
     int samples = ifd.getSamplesPerPixel();
@@ -550,30 +548,30 @@ public class TCSReader extends FormatReader {
       file = new Location(parent, file).getAbsolutePath();
       if (file.length() != current.getAbsolutePath().length()) continue;
 
-      RandomAccessInputStream rais = new RandomAccessInputStream(file, 16);
-      TiffParser tp = new TiffParser(rais);
-      if (!tp.isValidHeader()) {
-        continue;
-      }
-      ifd = tp.getIFDs().get(0);
+      try (RandomAccessInputStream rais = new RandomAccessInputStream(file, 16)) {
+        TiffParser tp = new TiffParser(rais);
+        if (!tp.isValidHeader()) {
+          continue;
+        }
+        ifd = tp.getMainIFDs().get(0);
 
-      if (tp.getIFDs().size() != expectedIFDCount ||
-        ifd.getImageWidth() != width || ifd.getImageLength() != height ||
-        ifd.getSamplesPerPixel() != samples)
-      {
-        continue;
-      }
+        if (tp.getMainIFDs().size() != expectedIFDCount ||
+          ifd.getImageWidth() != width || ifd.getImageLength() != height ||
+          ifd.getSamplesPerPixel() != samples)
+        {
+          continue;
+        }
 
-      String date = ifd.getIFDStringValue(IFD.DATE_TIME);
-      if (date != null) {
-        long stamp = DateTools.getTime(date, "yyyy:MM:dd HH:mm:ss");
+        String date = ifd.getIFDStringValue(IFD.DATE_TIME);
+        if (date != null) {
+          long stamp = DateTools.getTime(date, "yyyy:MM:dd HH:mm:ss");
 
-        String software = ifd.getIFDStringValue(IFD.SOFTWARE);
-        if (software != null && software.trim().startsWith("TCS")) {
-          timestamps.put(file, new Long(stamp));
+          String software = ifd.getIFDStringValue(IFD.SOFTWARE);
+          if (software != null && software.trim().startsWith("TCS")) {
+            timestamps.put(file, new Long(stamp));
+          }
         }
       }
-      rais.close();
     }
 
     String[] files = timestamps.keySet().toArray(new String[timestamps.size()]);
@@ -583,11 +581,10 @@ public class TCSReader extends FormatReader {
       long thisStamp = timestamps.get(file).longValue();
       boolean match = false;
       for (String tiff : tiffs) {
-        s = new RandomAccessInputStream(tiff, 16);
-        TiffParser parser = new TiffParser(s);
-        ifd = parser.getIFDs().get(0);
-        s.close();
-
+        try (RandomAccessInputStream s = new RandomAccessInputStream(tiff, 16)){
+          TiffParser parser = new TiffParser(s);
+          ifd = parser.getMainIFDs().get(0);
+        }
         String date = ifd.getIFDStringValue(IFD.DATE_TIME);
         long nextStamp = DateTools.getTime(date, "yyyy:MM:dd HH:mm:ss");
         if (Math.abs(thisStamp - nextStamp) < 600000) {

@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -47,8 +47,6 @@ import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.TiffParser;
-
-import ome.xml.model.primitives.PositiveInteger;
 
 import org.xml.sax.SAXException;
 import org.w3c.dom.Element;
@@ -97,8 +95,13 @@ public class FlowSightReader extends FormatReader {
    */
   @Override
   public boolean isThisType(RandomAccessInputStream stream)
-      throws IOException {
-    TiffParser tiffParser = new TiffParser(stream);
+          throws IOException {
+    TiffParser tiffParser;
+    try {
+      tiffParser = new TiffParser(stream);
+    } catch (java.lang.IllegalArgumentException iae) {
+      return false;
+    }
     if (! tiffParser.isValidHeader()) return false;
     IFD ifd = tiffParser.getFirstIFD();
     if (ifd == null) return false;
@@ -150,9 +153,12 @@ public class FlowSightReader extends FormatReader {
     if (channelNamesString != null) {
       channelNames = channelNamesString.split("\\|");
       if (channelNames.length != channelCount) {
-        throw new FormatException(String.format(
-            "Channel count (%d) does not match number of channel names (%d) in string \"%s\"",
-            channelCount, channelNames.length, channelNamesString));
+        if (LOGGER.isDebugEnabled()) {
+          LOGGER.debug("Channel count (%d) does not match number of " +
+              "channel names (%d) in string \"%s\"",
+              channelCount, channelNames.length, channelNamesString);
+        }
+        channelCount = channelNames.length;
       }
       LOGGER.debug("Found {} channels: {}",
           channelCount, channelNamesString.replace('|', ','));

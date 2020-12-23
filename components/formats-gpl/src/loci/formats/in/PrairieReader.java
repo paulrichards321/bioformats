@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -150,7 +150,7 @@ public class PrairieReader extends FormatReader {
     Location parent = file.getParentFile();
 
     String prefix = file.getName();
-    if (prefix.indexOf(".") != -1) {
+    if (prefix.indexOf('.') != -1) {
       prefix = prefix.substring(0, prefix.lastIndexOf("."));
     }
 
@@ -162,17 +162,15 @@ public class PrairieReader extends FormatReader {
     // check for appropriately named XML file
 
     Location xml = new Location(parent, prefix + ".xml");
-    while (!xml.exists() && prefix.indexOf("_") != -1) {
+    while (!xml.exists() && prefix.indexOf('_') != -1) {
       prefix = prefix.substring(0, prefix.lastIndexOf("_"));
       xml = new Location(parent, prefix + ".xml");
     }
 
     boolean validXML = false;
-    try {
-      RandomAccessInputStream xmlStream =
-        new RandomAccessInputStream(xml.getAbsolutePath());
+    try (RandomAccessInputStream xmlStream =
+        new RandomAccessInputStream(xml.getAbsolutePath())) {
       validXML = isThisType(xmlStream);
-      xmlStream.close();
     }
     catch (IOException e) {
       LOGGER.trace("Failed to check XML file's type", e);
@@ -523,7 +521,7 @@ public class PrairieReader extends FormatReader {
       final String laserID = MetadataTools.createLSID("LightSource", 0, 0);
       store.setLaserID(laserID, 0, 0);
 
-      store.setLaserPower(new Power(laserPower, UNITS.MW), 0, 0);
+      store.setLaserPower(new Power(laserPower, UNITS.MILLIWATT), 0, 0);
     }
 
     String objectiveID = null;
@@ -539,18 +537,18 @@ public class PrairieReader extends FormatReader {
       final PositiveFloat physicalSizeX =
         pf(firstFrame.getMicronsPerPixelX(), "PhysicalSizeX");
       if (physicalSizeX != null) {
-        store.setPixelsPhysicalSizeX(FormatTools.createLength(physicalSizeX, UNITS.MICROM), s);
+        store.setPixelsPhysicalSizeX(FormatTools.createLength(physicalSizeX, UNITS.MICROMETER), s);
       }
     
       // populate PhysicalSizeY
       final PositiveFloat physicalSizeY =
         pf(firstFrame.getMicronsPerPixelY(), "PhysicalSizeY");
       if (physicalSizeY != null) {
-        store.setPixelsPhysicalSizeY(FormatTools.createLength(physicalSizeY, UNITS.MICROM), s);
+        store.setPixelsPhysicalSizeY(FormatTools.createLength(physicalSizeY, UNITS.MICROMETER), s);
       }
       // populate TimeIncrement
       final Double waitTime = meta.getWaitTime();
-      if (waitTime != null) store.setPixelsTimeIncrement(new Time(waitTime, UNITS.S), s);
+      if (waitTime != null) store.setPixelsTimeIncrement(new Time(waitTime, UNITS.SECOND), s);
 
       final String[] detectorIDs = new String[channels.length];
 
@@ -578,7 +576,7 @@ public class PrairieReader extends FormatReader {
           // create a Detector for this channel
           detectorIDs[c] = MetadataTools.createLSID("Detector", 0, c);
           store.setDetectorID(detectorIDs[c], 0, c);
-          store.setDetectorType(getDetectorType("Other"), 0, c);
+          store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, c);
 
           // NB: Ideally we would populate the detector zoom differently for
           // each Image, rather than globally for the Detector, but
@@ -603,7 +601,7 @@ public class PrairieReader extends FormatReader {
         // create an Objective
         objectiveID = MetadataTools.createLSID("Objective", 0, 0);
         store.setObjectiveID(objectiveID, 0, 0);
-        store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
+        store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
 
         // populate Objective NominalMagnification
         final Double magnification = firstFrame.getMagnification();
@@ -618,7 +616,7 @@ public class PrairieReader extends FormatReader {
 
         // populate Objective Immersion
         final String immersion = firstFrame.getImmersion();
-        store.setObjectiveImmersion(getImmersion(immersion), 0, 0);
+        store.setObjectiveImmersion(MetadataTools.getImmersion(immersion), 0, 0);
 
         // populate Objective LensNA
         final Double lensNA = firstFrame.getObjectiveLensNA();
@@ -651,7 +649,7 @@ public class PrairieReader extends FormatReader {
             if (posX != null) store.setPlanePositionX(posX, s, i);
             if (posY != null) store.setPlanePositionY(posY, s, i);
             if (posZ != null) store.setPlanePositionZ(posZ, s, i);
-            if (deltaT != null) store.setPlaneDeltaT(new Time(deltaT, UNITS.S), s, i);
+            if (deltaT != null) store.setPlaneDeltaT(new Time(deltaT, UNITS.SECOND), s, i);
           }
         }
       }
@@ -692,10 +690,10 @@ public class PrairieReader extends FormatReader {
 
     // read entire XML document into a giant byte array
     final byte[] buf = new byte[(int) file.length()];
-    final RandomAccessInputStream is =
-      new RandomAccessInputStream(file.getAbsolutePath());
-    is.readFully(buf);
-    is.close();
+    try(RandomAccessInputStream is =
+      new RandomAccessInputStream(file.getAbsolutePath())) {
+      is.readFully(buf);
+    }
 
     // filter out invalid characters from the XML
     final String xml =

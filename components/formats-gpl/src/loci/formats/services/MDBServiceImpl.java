@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -122,6 +122,51 @@ public class MDBServiceImpl extends AbstractService implements MDBService {
       }
     }
     return rtn;
+  }
+
+  @Override
+  public Vector<String[]> parseTable(String name) throws IOException {
+    List catalog = mdb.catalog;
+    Vector<Holder> binder = new Vector<Holder>();
+
+    for (Object entry : catalog) {
+      int type = ((MdbCatalogEntry) entry).object_type;
+      String tableName = ((MdbCatalogEntry) entry).object_name;
+
+      if (type == Constants.MDB_TABLE && tableName.equals(name)) {
+        Vector<String[]> rtn = new Vector<String[]>();
+
+        MdbTableDef table = Table.mdb_read_table((MdbCatalogEntry) entry);
+        Table.mdb_read_columns(table);
+
+        int numCols = table.num_cols;
+        for (int i=0; i<numCols; i++) {
+          Holder h = new Holder();
+          Data.mdb_bind_column(table, i + 1, h);
+          binder.add(h);
+        }
+
+        String[] columnNames = new String[numCols];
+        for (int i=0; i<numCols; i++) {
+          columnNames[i] = ((MdbColumn) table.columns.get(i)).name;
+        }
+        rtn.add(columnNames);
+
+        while (fetchRow(table)) {
+          String[] row = new String[numCols];
+          for (int i=0; i<numCols; i++) {
+            Holder h = binder.get(i);
+            row[i] = h.s;
+          }
+          rtn.add(row);
+        }
+
+        return rtn;
+
+      }
+    }
+
+    return null;
   }
 
   /* @see MDBService#close() */

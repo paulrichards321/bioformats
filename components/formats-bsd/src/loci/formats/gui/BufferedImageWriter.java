@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -69,7 +69,7 @@ public class BufferedImageWriter extends WriterWrapper {
   /**
    * Saves the given BufferedImage to the current file.
    *
-   * @param no the image index within the current file, starting from 0.
+   * @param no the plane index within the series.
    * @param image the BufferedImage to save.
    */
   public void saveImage(int no, BufferedImage image)
@@ -82,7 +82,7 @@ public class BufferedImageWriter extends WriterWrapper {
    * Saves the given BufferedImage to the current file.  The BufferedImage
    * may represent a subsection of the full image to be saved.
    *
-   * @param no the image index within the current file, starting from 0.
+   * @param no the plane index within the series.
    * @param image the BufferedImage to save.
    * @param x the X coordinate of the upper-left corner of the image.
    * @param y the Y coordinate of the upper-left corner of the image.
@@ -113,7 +113,14 @@ public class BufferedImageWriter extends WriterWrapper {
 
     MetadataRetrieve r = writer.getMetadataRetrieve();
     if (r != null) {
-      Boolean bigEndian = r.getPixelsBinDataBigEndian(writer.getSeries(), 0);
+      Boolean bigEndian = false;
+      if (r.getPixelsBigEndian(writer.getSeries()) != null)
+      {
+        bigEndian = r.getPixelsBigEndian(writer.getSeries()).booleanValue();
+      }
+      else if (r.getPixelsBinDataCount(writer.getSeries()) == 0) {
+        bigEndian = r.getPixelsBinDataBigEndian(writer.getSeries(), 0).booleanValue();
+      }
       if (bigEndian != null) littleEndian = !bigEndian.booleanValue();
     }
 

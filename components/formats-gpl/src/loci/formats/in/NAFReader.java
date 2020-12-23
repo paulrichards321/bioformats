@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -145,7 +145,7 @@ public class NAFReader extends FormatReader {
       String name = in.readCString();
 
       if (i == 0) {
-        in.skipBytes((int) (92 - in.getFilePointer() + pointer));
+        in.skipBytes(92 - in.getFilePointer() + pointer);
         while (true) {
           int check = in.readInt();
           if (check > in.getFilePointer()) {

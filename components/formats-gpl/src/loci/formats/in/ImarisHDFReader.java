@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -37,7 +37,7 @@ import loci.common.services.ServiceException;
 import loci.common.services.ServiceFactory;
 import loci.formats.CoreMetadata;
 import loci.formats.FormatException;
-import loci.formats.FormatReader;
+import loci.formats.SubResolutionFormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.MissingLibraryException;
@@ -45,13 +45,12 @@ import loci.formats.meta.MetadataStore;
 import loci.formats.services.NetCDFService;
 import loci.formats.services.NetCDFServiceImpl;
 import ome.xml.model.primitives.Color;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.units.quantity.Length;
 
 /**
  * Reader for Bitplane Imaris 5.5 (HDF) files.
  */
-public class ImarisHDFReader extends FormatReader {
+public class ImarisHDFReader extends SubResolutionFormatReader {
 
   // -- Constants --
 
@@ -86,13 +85,13 @@ public class ImarisHDFReader extends FormatReader {
   /* @see loci.formats.IFormatReader#getOptimalTileWidth() */
   @Override
   public int getOptimalTileWidth() {
-    return core.get(core.size() - 1).sizeX;
+    return core.get(series, core.size(series) - 1).sizeX;
   }
 
   /* @see loci.formats.IFormatReader#getOptimalTileHeight() */
   @Override
   public int getOptimalTileHeight() {
-    return core.get(core.size() - 1).sizeY;
+    return core.get(series, core.size(series) - 1).sizeY;
   }
 
   /* @see loci.formats.IFormatReader#isThisType(RandomAccessInputStream) */
@@ -265,18 +264,15 @@ public class ImarisHDFReader extends FormatReader {
     seriesCount = 0;
 
     // read all of the metadata key/value pairs
+    CoreMetadata ms0 = core.get(0, 0);
 
     parseAttributes();
 
-    CoreMetadata ms0 = core.get(0);
+    int currentSeries = 0;
 
     if (seriesCount > 1) {
       for (int i=1; i<seriesCount; i++) {
-        core.add(new CoreMetadata());
-      }
-
-      for (int i=1; i<seriesCount; i++) {
-        CoreMetadata ms = core.get(i);
+        CoreMetadata ms = new CoreMetadata();
         String groupPath =
           "DataSet/ResolutionLevel_" + i + "/TimePoint_0/Channel_0";
         ms.sizeX =
@@ -291,12 +287,12 @@ public class ImarisHDFReader extends FormatReader {
         ms.thumbnail = true;
 
         if (ms.sizeZ == ms0.sizeZ && ms.sizeC == ms0.sizeC &&
-          ms.sizeT == ms0.sizeT)
-        {
-          // do not assume that all series will have the same dimensions
-          // if the Z, C or T size is different, then it cannot
-          // be a subresolution
-          ms0.resolutionCount++;
+            ms.sizeT == ms0.sizeT) {
+          core.add(currentSeries, ms);
+        }
+        else {
+          core.add(ms);
+          currentSeries++;
         }
       }
     }
@@ -319,17 +315,19 @@ public class ImarisHDFReader extends FormatReader {
       throw new FormatException("Unknown pixel type: " + pix);
     }
 
-    for (int i=0; i<core.size(); i++) {
-      CoreMetadata ms = core.get(i);
-      ms.pixelType = type;
-      ms.dimensionOrder = "XYZCT";
-      ms.rgb = false;
-      ms.thumbSizeX = 128;
-      ms.thumbSizeY = 128;
-      ms.orderCertain = true;
-      ms.littleEndian = true;
-      ms.interleaved = false;
-      ms.indexed = colors.size() >= getSizeC();
+    for (int i = 0; i < core.size(); i++) {
+      for (int j = 0; j < core.size(i); j++) {
+        CoreMetadata ms = core.get(i, j);
+        ms.pixelType = type;
+        ms.dimensionOrder = "XYZCT";
+        ms.rgb = false;
+        ms.thumbSizeX = 128;
+        ms.thumbSizeY = 128;
+        ms.orderCertain = true;
+        ms.littleEndian = true;
+        ms.interleaved = false;
+        ms.indexed = colors.size() >= getSizeC();
+      }
     }
 
     MetadataStore store = makeFilterMetadata();
@@ -479,7 +477,7 @@ public class ImarisHDFReader extends FormatReader {
 
   private void parseAttributes() {
     final List<String> attributes = netcdf.getAttributeList();
-    CoreMetadata ms0 = core.get(0);
+    CoreMetadata ms0 = core.get(0, 0);
 
     for (String attr : attributes) {
       String name = attr.substring(attr.lastIndexOf("/") + 1);
@@ -487,7 +485,7 @@ public class ImarisHDFReader extends FormatReader {
       if (value == null) continue;
       value = value.trim();
 
-      if (name.equals("X") || name.equals("ImageSizeX")) {
+      if (name.equals("X") || (attr.startsWith("DataSet/ResolutionLevel_0") && name.equals("ImageSizeX"))) {
         try {
           ms0.sizeX = Integer.parseInt(value);
         }
@@ -495,7 +493,7 @@ public class ImarisHDFReader extends FormatReader {
           LOGGER.trace("Failed to parse '" + name + "'", e);
         }
       }
-      else if (name.equals("Y") || name.equals("ImageSizeY")) {
+      else if (name.equals("Y") || (attr.startsWith("DataSet/ResolutionLevel_0") && name.equals("ImageSizeY"))) {
         try {
           ms0.sizeY = Integer.parseInt(value);
         }
@@ -503,7 +501,7 @@ public class ImarisHDFReader extends FormatReader {
           LOGGER.trace("Failed to parse '" + name + "'", e);
         }
       }
-      else if (name.equals("Z") || name.equals("ImageSizeZ")) {
+      else if (name.equals("Z") || (attr.startsWith("DataSet/ResolutionLevel_0") && name.equals("ImageSizeZ"))) {
         try {
           ms0.sizeZ = Integer.parseInt(value);
         }
@@ -537,7 +535,7 @@ public class ImarisHDFReader extends FormatReader {
         int slash = attr.indexOf("/", 24);
         int n = Integer.parseInt(attr.substring(24, slash == -1 ?
           attr.length() : slash));
-        if (n == seriesCount) seriesCount++;
+        if (n >= seriesCount) seriesCount = n + 1;
       }
 
       if (attr.startsWith("DataSetInfo/Channel_")) {
@@ -548,7 +546,7 @@ public class ImarisHDFReader extends FormatReader {
           }
         }
 
-        int underscore = attr.indexOf("_") + 1;
+        int underscore = attr.indexOf('_') + 1;
         int cIndex = Integer.parseInt(attr.substring(underscore,
           attr.indexOf("/", underscore)));
 

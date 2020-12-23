@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -50,7 +50,6 @@ import loci.formats.meta.MetadataStore;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.TiffParser;
 import ome.xml.model.primitives.NonNegativeInteger;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.PositiveInteger;
 import ome.units.quantity.Length;
 import ome.units.quantity.Time;
@@ -71,7 +70,9 @@ public class ScanrReader extends FormatReader {
   private static final String EXPERIMENT_FILE = "experiment_descriptor.dat";
   private static final String ACQUISITION_FILE = "AcquisitionLog.dat";
   private static final String[] METADATA_SUFFIXES = new String[] {"dat", "xml"};
-
+  public static final String SKIP_MISSING_WELLS = "scanr.skip_missing_wells";
+  public static final boolean SKIP_MISSING_WELLS_DEFAULT = true;
+  
   // -- Fields --
 
   private final List<String> metadataFiles = new ArrayList<String>();
@@ -519,7 +520,12 @@ public class ScanrReader extends FormatReader {
       if (next == originalIndex &&
         missingWellFiles == nSlices * nTimepoints * nChannels * nPos)
       {
-        wellNumbers.remove(well);
+        if (skipMissingWells()) {
+          wellNumbers.remove(well);
+        }
+        else {
+          next += nSlices * nTimepoints * nChannels * nPos;
+        }
       }
     }
     nWells = wellNumbers.size();
@@ -545,7 +551,12 @@ public class ScanrReader extends FormatReader {
     }
 
     reader = new MinimalTiffReader();
-    reader.setId(tiffs[0]);
+    for (String tiff : tiffs) {
+      if (tiff != null) {
+        reader.setId(tiff);
+        break;
+      }
+    }
     int sizeX = reader.getSizeX();
     int sizeY = reader.getSizeY();
     int pixelType = reader.getPixelType();
@@ -615,10 +626,10 @@ public class ScanrReader extends FormatReader {
       store.setPlateAcquisitionMaximumFieldCount(fieldCount, 0, 0);
     }
 
+    int index = 0;
     for (int i=0; i<getSeriesCount(); i++) {
       int field = i % nFields;
       int well = i / nFields;
-      int index = well;
       while (wellNumbers.get(index) == null && index < wellNumbers.size()) {
         index++;
       }
@@ -647,6 +658,9 @@ public class ScanrReader extends FormatReader {
       store.setImageName(name, i);
 
       store.setPlateAcquisitionWellSampleRef(wellSample, 0, 0, i);
+      if (field == nFields - 1) {
+        index++;
+      }
     }
 
     if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
@@ -687,10 +701,10 @@ public class ScanrReader extends FormatReader {
             Double time = exposures.get(c);
             if (time != null) {
               time /= 1000;
-              store.setPlaneExposureTime(new Time(time, UNITS.S), i, image);
+              store.setPlaneExposureTime(new Time(time, UNITS.SECOND), i, image);
             }
             if (deltaT != null) {
-              store.setPlaneDeltaT(new Time(deltaT, UNITS.S), i, image);
+              store.setPlaneDeltaT(new Time(deltaT, UNITS.SECOND), i, image);
             }
           }
         }
@@ -699,10 +713,19 @@ public class ScanrReader extends FormatReader {
       String row = wellRows > 26 ? "Number" : "Letter";
       String col = wellRows > 26 ? "Letter" : "Number";
 
-      store.setPlateRowNamingConvention(getNamingConvention(row), 0);
-      store.setPlateColumnNamingConvention(getNamingConvention(col), 0);
+      store.setPlateRowNamingConvention(MetadataTools.getNamingConvention(row), 0);
+      store.setPlateColumnNamingConvention(MetadataTools.getNamingConvention(col), 0);
       store.setPlateName(plateName, 0);
     }
+  }
+  
+  public boolean skipMissingWells() {
+    MetadataOptions options = getMetadataOptions();
+    if (options instanceof DynamicMetadataOptions) {
+      return ((DynamicMetadataOptions) options).getBoolean(
+          SKIP_MISSING_WELLS, SKIP_MISSING_WELLS_DEFAULT);
+    }
+    return SKIP_MISSING_WELLS_DEFAULT;
   }
 
   // -- Helper class --
@@ -718,7 +741,7 @@ public class ScanrReader extends FormatReader {
     private int nextXPos = 0;
     private int nextYPos = 0;
 
-    private StringBuffer currentValue = new StringBuffer();
+    private final StringBuilder currentValue = new StringBuilder();
 
     // -- DefaultHandler API methods --
 

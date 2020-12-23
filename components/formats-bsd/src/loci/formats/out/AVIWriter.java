@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -34,7 +34,8 @@ package loci.formats.out;
 
 import java.awt.image.IndexColorModel;
 import java.io.IOException;
-import java.util.Vector;
+import java.util.ArrayList;
+import java.util.List;
 
 import loci.common.RandomAccessInputStream;
 import loci.formats.FormatException;
@@ -87,7 +88,7 @@ public class AVIWriter extends FormatWriter {
   private int xDim, yDim, zDim, tDim, xPad;
   private int microSecPerFrame;
 
-  private Vector<Long> savedbLength;
+  private List<Long> savedbLength;
   private long idx1Pos;
   private long endPos;
   private long saveidx1Length;
@@ -239,28 +240,29 @@ public class AVIWriter extends FormatWriter {
   public void setId(String id) throws FormatException, IOException {
     super.setId(id);
 
-    savedbLength = new Vector<Long>();
+    savedbLength = new ArrayList<Long>();
 
     if (out.length() > 0) {
-      RandomAccessInputStream in = new RandomAccessInputStream(currentId);
-      in.order(true);
-      in.seek(FRAME_OFFSET);
-      planesWritten = in.readInt();
+      try (RandomAccessInputStream in = new RandomAccessInputStream(currentId)) {
+        in.order(true);
+        in.seek(FRAME_OFFSET);
+        planesWritten = in.readInt();
 
-      in.seek(SAVE_FILE_SIZE);
-      endPos = in.readInt() + SAVE_FILE_SIZE + 4;
+        in.seek(SAVE_FILE_SIZE);
+        endPos = in.readInt() + SAVE_FILE_SIZE + 4;
 
-      in.seek(SAVE_LIST2_SIZE);
-      idx1Pos = in.readInt() + SAVE_LIST2_SIZE + 4;
-      saveidx1Length = idx1Pos + 4;
+        in.seek(SAVE_LIST2_SIZE);
+        idx1Pos = in.readInt() + SAVE_LIST2_SIZE + 4;
+        saveidx1Length = idx1Pos + 4;
 
-      if (planesWritten > 0) in.seek(saveidx1Length + 4);
-      for (int z=0; z<planesWritten; z++) {
-        in.skipBytes(8);
-        savedbLength.add(in.readInt() + 4 + SAVE_MOVI);
-        in.skipBytes(4);
+        if (planesWritten > 0) in.seek(saveidx1Length + 4);
+        for (int z=0; z<planesWritten; z++) {
+          in.skipBytes(8);
+          savedbLength.add(in.readInt() + 4 + SAVE_MOVI);
+          in.skipBytes(4);
+        }
       }
-      in.close();
+
       out.seek(idx1Pos);
     }
     else {

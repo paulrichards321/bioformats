@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2020 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -33,9 +33,8 @@
 package loci.formats.out;
 
 import java.io.IOException;
-
 import loci.common.RandomAccessInputStream;
-import loci.common.RandomAccessOutputStream;
+import loci.common.Region;
 import loci.formats.FormatException;
 import loci.formats.FormatTools;
 import loci.formats.FormatWriter;
@@ -48,10 +47,6 @@ import loci.formats.tiff.TiffCompression;
 import loci.formats.tiff.TiffParser;
 import loci.formats.tiff.TiffRational;
 import loci.formats.tiff.TiffSaver;
-
-import ome.xml.model.primitives.PositiveFloat;
-
-import ome.units.quantity.Time;
 import ome.units.quantity.Length;
 import ome.units.UNITS;
 
@@ -72,6 +67,8 @@ public class TiffWriter extends FormatWriter {
     CompressionType.J2K_LOSSY.getCompression();
   public static final String COMPRESSION_JPEG =
     CompressionType.JPEG.getCompression();
+  public static final String COMPRESSION_ZLIB =
+    CompressionType.ZLIB.getCompression();
 
   private static final String[] BIG_TIFF_SUFFIXES = {"tf2", "tf8", "btf"};
 
@@ -82,10 +79,16 @@ public class TiffWriter extends FormatWriter {
    */
   private static final long BIG_TIFF_CUTOFF = (long) 1024 * 1024 * 3990;
 
+  /** TIFF tiles must be of a height and width divisible by 16. */
+  private static final int TILE_GRANULARITY = 16;
+
   // -- Fields --
 
   /** Whether or not the output file is a BigTIFF file. */
   protected boolean isBigTiff;
+
+  /** Whether or not BigTIFF can be used automatically. */
+  protected boolean canDetectBigTiff = true;
 
   /** The TiffSaver that will do most of the writing. */
   protected TiffSaver tiffSaver;
@@ -95,6 +98,12 @@ public class TiffWriter extends FormatWriter {
 
   /** Whether or not to check the parameters passed to saveBytes. */
   protected boolean checkParams = true;
+
+  /** The tile width which will be used for writing. */
+  protected int tileSizeX;
+
+  /** The tile height which will be used for writing. */
+  protected int tileSizeY;
 
   /**
    * Sets the compression code for the specified IFD.
@@ -118,6 +127,9 @@ public class TiffWriter extends FormatWriter {
     else if (compression.equals(COMPRESSION_JPEG)) {
       compressType = TiffCompression.JPEG;
     }
+    else if (compression.equals(COMPRESSION_ZLIB)) {
+      compressType = TiffCompression.DEFLATE;
+    }
     Object v = ifd.get(new Integer(IFD.COMPRESSION));
     if (v == null)
       ifd.put(new Integer(IFD.COMPRESSION), compressType.getCode());
@@ -137,7 +149,8 @@ public class TiffWriter extends FormatWriter {
       COMPRESSION_LZW,
       COMPRESSION_J2K,
       COMPRESSION_J2K_LOSSY,
-      COMPRESSION_JPEG
+      COMPRESSION_JPEG,
+      COMPRESSION_ZLIB
     };
     isBigTiff = false;
   }
@@ -169,12 +182,18 @@ public class TiffWriter extends FormatWriter {
           int type = FormatTools.pixelTypeFromString(
             retrieve.getPixelsType(i).toString());
           long bpp = FormatTools.getBytesPerPixel(type);
-          totalBytes += sizeX * sizeY * sizeZ * sizeC * sizeT * bpp;
+          totalBytes += (long)sizeX * (long)sizeY * (long)sizeZ * (long)sizeC * (long)sizeT * bpp;
         }
 
         if (totalBytes >= BIG_TIFF_CUTOFF) {
-          LOGGER.info("Switching to BigTIFF (by file size)");
-          isBigTiff = true;
+          if (canDetectBigTiff) {
+            LOGGER.info("Switching to BigTIFF (by file size)");
+            isBigTiff = true;
+          }
+          else {
+            LOGGER.info("Automatic BigTIFF disabled but pixel byte count = {}",
+              totalBytes);
+          }
         }
       }
     }
@@ -189,21 +208,20 @@ public class TiffWriter extends FormatWriter {
   /**
    * Saves the given image to the specified (possibly already open) file.
    * The IFD hashtable allows specification of TIFF parameters such as bit
-   * depth, compression and units.
+   * depth, compression and units. Use one IFD instance per plane.
    */
   public void saveBytes(int no, byte[] buf, IFD ifd)
     throws IOException, FormatException
   {
-    MetadataRetrieve r = getMetadataRetrieve();
-    int w = r.getPixelsSizeX(series).getValue().intValue();
-    int h = r.getPixelsSizeY(series).getValue().intValue();
+    int w = getSizeX();
+    int h = getSizeY();
     saveBytes(no, buf, ifd, 0, 0, w, h);
   }
 
   /**
    * Saves the given image to the specified series in the current file.
    * The IFD hashtable allows specification of TIFF parameters such as bit
-   * depth, compression and units.
+   * depth, compression and units. Use one IFD instance per plane.
    */
   public void saveBytes(int no, byte[] buf, IFD ifd, int x, int y, int w, int h)
     throws IOException, FormatException
@@ -214,19 +232,62 @@ public class TiffWriter extends FormatWriter {
     int type = FormatTools.pixelTypeFromString(
         retrieve.getPixelsType(series).toString());
     int index = no;
-    // This operation is synchronized
-    synchronized (this) {
-      // This operation is synchronized against the TIFF saver.
-      synchronized (tiffSaver) {
-        index = prepareToWriteImage(no, buf, ifd, x, y, w, h);
-        if (index == -1) {
-          return;
+    int currentTileSizeX = getTileSizeX();
+    int currentTileSizeY = getTileSizeY();
+    boolean usingTiling = currentTileSizeX > 0 && currentTileSizeY > 0;
+    if (usingTiling) {
+      ifd.put(new Integer(IFD.TILE_WIDTH), new Long(currentTileSizeX));
+      ifd.put(new Integer(IFD.TILE_LENGTH), new Long(currentTileSizeY));
+    }
+    if (usingTiling && (currentTileSizeX < w || currentTileSizeY < h)) {
+      int numTilesX = (w + (x % currentTileSizeX) + currentTileSizeX - 1) / currentTileSizeX;
+      int numTilesY = (h + (y % currentTileSizeY) + currentTileSizeY - 1) / currentTileSizeY;
+      for (int yTileIndex = 0; yTileIndex < numTilesY; yTileIndex++) {
+        for (int xTileIndex = 0; xTileIndex < numTilesX; xTileIndex++) {
+          Region tileParams = new Region();
+          tileParams.width = xTileIndex < numTilesX - 1 ? currentTileSizeX - (x % currentTileSizeX) : w - (currentTileSizeX * xTileIndex);
+          tileParams.height = yTileIndex < numTilesY - 1 ? currentTileSizeY - (y % currentTileSizeY) : h - (currentTileSizeY * yTileIndex);
+          tileParams.x = x + (xTileIndex * currentTileSizeX) - (xTileIndex > 0 ? (x % currentTileSizeX) : 0);
+          tileParams.y = y + (yTileIndex * currentTileSizeY) - (yTileIndex > 0 ? (y % currentTileSizeY) : 0);
+          byte [] tileBuf = getTile(buf, tileParams, new Region(x, y, w, h));
+
+          // This operation is synchronized
+          synchronized (this) {
+            // This operation is synchronized against the TIFF saver.
+            synchronized (tiffSaver) {
+              index = prepareToWriteImage(no, tileBuf, ifd, tileParams.x, tileParams.y, tileParams.width, tileParams.height);
+              if (index == -1) {
+                return;
+              }
+            }
+          }
+
+          boolean lastPlane = no == getPlaneCount() - 1;
+          boolean lastSeries = getSeries() == retrieve.getImageCount() - 1;
+          boolean lastResolution = getResolution() == getResolutionCount() - 1;
+          tiffSaver.writeImage(tileBuf, ifd, index, type, tileParams.x, tileParams.y, tileParams.width, tileParams.height,
+            lastPlane && lastSeries && lastResolution);
         }
       }
     }
+    else {
+      // This operation is synchronized
+      synchronized (this) {
+        // This operation is synchronized against the TIFF saver.
+        synchronized (tiffSaver) {
+          index = prepareToWriteImage(no, buf, ifd, x, y, w, h);
+          if (index == -1) {
+            return;
+          }
+        }
+      }
 
-    tiffSaver.writeImage(buf, ifd, index, type, x, y, w, h,
-      no == getPlaneCount() - 1 && getSeries() == retrieve.getImageCount() - 1);
+      boolean lastPlane = no == getPlaneCount() - 1;
+      boolean lastSeries = getSeries() == retrieve.getImageCount() - 1;
+      boolean lastResolution = getResolution() == getResolutionCount() - 1;
+      tiffSaver.writeImage(buf, ifd, index, type, x, y, w, h,
+        lastPlane && lastSeries && lastResolution);
+    }
   }
 
   /**
@@ -238,24 +299,29 @@ public class TiffWriter extends FormatWriter {
       int no, byte[] buf, IFD ifd, int x, int y, int w, int h)
   throws IOException, FormatException {
     MetadataRetrieve retrieve = getMetadataRetrieve();
-    Boolean bigEndian = retrieve.getPixelsBinDataBigEndian(series, 0);
-    boolean littleEndian = bigEndian == null ?
-      false : !bigEndian.booleanValue();
+    boolean littleEndian = false;
+    if (retrieve.getPixelsBigEndian(series) != null) {
+      littleEndian = !retrieve.getPixelsBigEndian(series).booleanValue();
+    }
+    else if (retrieve.getPixelsBinDataCount(series) == 0) {
+      littleEndian = !retrieve.getPixelsBinDataBigEndian(series, 0).booleanValue();
+    }
 
     // Ensure that no more than one thread manipulated the initialized array
     // at one time.
     synchronized (this) {
-      if (no < initialized[series].length && !initialized[series][no]) {
+      if (!initialized[series][no]) {
         initialized[series][no] = true;
 
-        RandomAccessInputStream tmp = new RandomAccessInputStream(currentId);
-        if (tmp.length() == 0) {
-          synchronized (this) {
-            // write TIFF header
-            tiffSaver.writeHeader();
+        try (RandomAccessInputStream tmp = createInputStream()) {
+          tmp.order(littleEndian);
+          if (tmp.length() == 0) {
+            synchronized (this) {
+              // write TIFF header
+              tiffSaver.writeHeader();
+            }
           }
         }
-        tmp.close();
       }
     }
 
@@ -267,24 +333,6 @@ public class TiffWriter extends FormatWriter {
     int blockSize = w * h * c * bytesPerPixel;
     if (blockSize > buf.length) {
       c = buf.length / (w * h * bytesPerPixel);
-    }
-
-    if (bytesPerPixel > 1 && c != 1 && c != 3) {
-      // split channels
-      checkParams = false;
-
-      if (no == 0) {
-        initialized[series] = new boolean[initialized[series].length * c];
-      }
-
-      for (int i=0; i<c; i++) {
-        byte[] b = ImageTools.splitChannels(buf, i, c, bytesPerPixel,
-          false, interleaved);
-
-        saveBytes(no * c + i, b, (IFD) ifd.clone(), x, y, w, h);
-      }
-      checkParams = true;
-      return -1;
     }
 
     formatCompression(ifd);
@@ -311,20 +359,20 @@ public class TiffWriter extends FormatWriter {
       }
     }
 
-    int width = retrieve.getPixelsSizeX(series).getValue().intValue();
-    int height = retrieve.getPixelsSizeY(series).getValue().intValue();
+    int width = getSizeX();
+    int height = getSizeY();
     ifd.put(new Integer(IFD.IMAGE_WIDTH), new Long(width));
     ifd.put(new Integer(IFD.IMAGE_LENGTH), new Long(height));
 
     Length px = retrieve.getPixelsPhysicalSizeX(series);
-    Double physicalSizeX = px == null || px.value(UNITS.MICROM) == null ? null : px.value(UNITS.MICROM).doubleValue();
+    Double physicalSizeX = px == null || px.value(UNITS.MICROMETER) == null ? null : px.value(UNITS.MICROMETER).doubleValue();
     if (physicalSizeX == null || physicalSizeX.doubleValue() == 0) {
       physicalSizeX = 0d;
     }
     else physicalSizeX = 1d / physicalSizeX;
 
     Length py = retrieve.getPixelsPhysicalSizeY(series);
-    Double physicalSizeY = py == null || py.value(UNITS.MICROM) == null ? null : py.value(UNITS.MICROM).doubleValue();
+    Double physicalSizeY = py == null || py.value(UNITS.MICROMETER) == null ? null : py.value(UNITS.MICROMETER).doubleValue();
     if (physicalSizeY == null || physicalSizeY.doubleValue() == 0) {
       physicalSizeY = 0d;
     }
@@ -369,10 +417,15 @@ public class TiffWriter extends FormatWriter {
       "ImageJ=\nhyperstack=true\nimages=" + (channels * z * t) + "\nchannels=" +
       channels + "\nslices=" + z + "\nframes=" + t);
 
-    int index = no;
-    for (int i=0; i<getSeries(); i++) {
-      index += getPlaneCount(i);
+    int index = (no * getResolutionCount()) + getResolution();
+    int currentSeries = getSeries();
+    int currentResolution = getResolution();
+    for (int i=0; i<currentSeries; i++) {
+      setSeries(i);
+      index += (getPlaneCount() * getResolutionCount());
     }
+    setSeries(currentSeries);
+    setResolution(currentResolution);
     return index;
   }
 
@@ -397,20 +450,6 @@ public class TiffWriter extends FormatWriter {
   public int getPlaneCount() {
     return getPlaneCount(series);
   }
-  
-  @Override
-  protected int getPlaneCount(int series) {
-    MetadataRetrieve retrieve = getMetadataRetrieve();
-    int c = getSamplesPerPixel(series);
-    int type = FormatTools.pixelTypeFromString(
-      retrieve.getPixelsType(series).toString());
-    int bytesPerPixel = FormatTools.getBytesPerPixel(type);
-
-    if (bytesPerPixel > 1 && c != 1 && c != 3) {
-      return super.getPlaneCount(series) * c;
-    }
-    return super.getPlaneCount(series);
-  }
 
   // -- IFormatWriter API methods --
 
@@ -423,22 +462,18 @@ public class TiffWriter extends FormatWriter {
   {
     IFD ifd = new IFD();
     if (!sequential) {
-      TiffParser parser = new TiffParser(currentId);
-      try {
+      try (RandomAccessInputStream stream = new RandomAccessInputStream(currentId)) {
+        TiffParser parser = new TiffParser(stream);
         long[] ifdOffsets = parser.getIFDOffsets();
         if (no < ifdOffsets.length) {
           ifd = parser.getIFD(ifdOffsets[no]);
         }
-      }
-      finally {
-        RandomAccessInputStream tiffParserStream = parser.getStream();
-        if (tiffParserStream != null) {
-          tiffParserStream.close();
-        }
+        saveBytes(no, buf, ifd, x, y, w, h);
       }
     }
-
-    saveBytes(no, buf, ifd, x, y, w, h);
+    else {
+      saveBytes(no, buf, ifd, x, y, w, h);
+    }
   }
 
   /* @see loci.formats.IFormatWriter#canDoStacks(String) */
@@ -473,22 +508,117 @@ public class TiffWriter extends FormatWriter {
     isBigTiff = bigTiff;
   }
 
+  /**
+   * Sets whether or not BigTIFF can be used automatically
+   * based upon the input data size (true by default).
+   * This flag is not reset when close() is called.
+   */
+  public void setCanDetectBigTiff(boolean detect) {
+    FormatTools.assertId(currentId, false, 1);
+    canDetectBigTiff = detect;
+  }
+
   // -- Helper methods --
 
   protected void setupTiffSaver() throws IOException {
     out.close();
-    out = new RandomAccessOutputStream(currentId);
-    tiffSaver = new TiffSaver(out, currentId);
+    out = createOutputStream();
+    tiffSaver = createTiffSaver();
 
     MetadataRetrieve retrieve = getMetadataRetrieve();
-    Boolean bigEndian = retrieve.getPixelsBinDataBigEndian(series, 0);
-    boolean littleEndian = bigEndian == null ?
-      false : !bigEndian.booleanValue();
+    boolean littleEndian = false;
+    if (retrieve.getPixelsBigEndian(series) != null) {
+      littleEndian = !retrieve.getPixelsBigEndian(series).booleanValue();
+    }
+    else if (retrieve.getPixelsBinDataCount(series) == 0) {
+      littleEndian = !retrieve.getPixelsBinDataBigEndian(series, 0).booleanValue();
+    }
 
     tiffSaver.setWritingSequentially(sequential);
     tiffSaver.setLittleEndian(littleEndian);
     tiffSaver.setBigTiff(isBigTiff);
     tiffSaver.setCodecOptions(options);
+  }
+
+  @Override
+  public int getTileSizeX() throws FormatException {
+    if (tileSizeX == 0) {
+      return super.getTileSizeX();
+    }
+    return tileSizeX;
+  }
+
+  @Override
+  public int setTileSizeX(int tileSize) throws FormatException {
+    tileSizeX = super.setTileSizeX(tileSize);
+    if (tileSize == 0) {
+      tileSizeX = 0;
+    }
+    else if (tileSize < TILE_GRANULARITY) {
+      tileSizeX = TILE_GRANULARITY;
+    }
+    else {
+      tileSizeX = Math.round((float)tileSize/TILE_GRANULARITY) * TILE_GRANULARITY;
+    }
+    return tileSizeX;
+  }
+
+  @Override
+  public int getTileSizeY() throws FormatException {
+    if (tileSizeY == 0) {
+      return super.getTileSizeY();
+    }
+    return tileSizeY;
+  }
+
+  @Override
+  public int setTileSizeY(int tileSize) throws FormatException {
+    tileSizeY = super.setTileSizeY(tileSize);
+    if (tileSize == 0) {
+      tileSizeY = 0;
+    }
+    else if (tileSize < TILE_GRANULARITY) {
+      tileSizeY = TILE_GRANULARITY;
+    }
+    else {
+      tileSizeY = Math.round((float)tileSize/TILE_GRANULARITY) * TILE_GRANULARITY;
+    }
+    return tileSizeY;
+  }
+
+  private byte[] getTile(byte[] buf, Region tileParams, Region srcParams) {
+    MetadataRetrieve retrieve = getMetadataRetrieve();
+    int type = FormatTools.pixelTypeFromString(retrieve.getPixelsType(series).toString());
+    int channel_count = getSamplesPerPixel();
+    int bytesPerPixel = FormatTools.getBytesPerPixel(type);
+    int tileSize = tileParams.width * tileParams.height * bytesPerPixel * channel_count;
+    byte [] returnBuf = new byte[tileSize];
+
+    for (int row = tileParams.y; row != tileParams.y + tileParams.height; row++) {
+      for (int sampleoffset = 0; sampleoffset < (tileParams.width * channel_count); sampleoffset++) {
+        int channel_index = sampleoffset / tileParams.width;
+        int channel_offset = (sampleoffset - (tileParams.width * channel_index)) * bytesPerPixel;
+        int full_row_width = srcParams.width * bytesPerPixel;
+        int full_plane_size = full_row_width * srcParams.height;
+        int xoffset = (tileParams.x - srcParams.x) * bytesPerPixel;
+        int yoffset = (row - srcParams.y) * full_row_width;
+        int row_offset = (row - tileParams.y) * tileParams.width * bytesPerPixel;
+        int src_index = yoffset + xoffset + channel_offset + (channel_index * full_plane_size);
+        int dest_index = (tileParams.height * tileParams.width * channel_index * bytesPerPixel) + row_offset;
+        for (int pixelByte = 0; pixelByte < bytesPerPixel; pixelByte++) {
+          returnBuf[dest_index + channel_offset + pixelByte] = buf[src_index + pixelByte];
+        }
+      }
+    }
+    return returnBuf;
+  }
+  
+  protected RandomAccessInputStream createInputStream() throws IOException {
+    return new RandomAccessInputStream(currentId);
+  }
+  
+  protected TiffSaver createTiffSaver() {
+    return new TiffSaver(out, currentId);
   }
 
 }

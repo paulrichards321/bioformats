@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -28,7 +28,6 @@ package loci.formats.in;
 import java.io.IOException;
 import java.util.ArrayList;
 
-import loci.common.Constants;
 import loci.common.RandomAccessInputStream;
 import loci.formats.CoreMetadata;
 import loci.formats.FormatException;
@@ -69,7 +68,7 @@ public class ZeissLMSReader extends FormatReader {
     if (!FormatTools.validStream(stream, checkLen, false)) {
       return false;
     }
-    return in.readString(checkLen).indexOf(CHECK) >= 0;
+    return stream.readString(checkLen).indexOf(CHECK) >= 0;
   }
 
   /* @see loci.formats.IFormatReader#get8BitLookupTable() */
@@ -90,7 +89,7 @@ public class ZeissLMSReader extends FormatReader {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
     in.seek(offsets.get(getSeriesCount() - getSeries() - 1));
-    in.skipBytes(no * FormatTools.getPlaneSize(this));
+    in.skipBytes((long) no * FormatTools.getPlaneSize(this));
     readPlane(in, x, y, w, h, buf);
 
     return buf;
@@ -111,7 +110,6 @@ public class ZeissLMSReader extends FormatReader {
   public void initFile(String id) throws FormatException, IOException {
     super.initFile(id);
     in = new RandomAccessInputStream(id);
-    MetadataLevel level = getMetadataOptions().getMetadataLevel();
 
     CoreMetadata m = core.get(0);
     CoreMetadata thumb = new CoreMetadata();
@@ -146,7 +144,7 @@ public class ZeissLMSReader extends FormatReader {
     seekToNextMarker();
     in.skipBytes(50);
     offsets.add(in.getFilePointer());
-    in.skipBytes(thumb.sizeX * thumb.sizeY * thumb.sizeC);
+    in.skipBytes((long) thumb.sizeX * thumb.sizeY * thumb.sizeC);
 
     seekToNextMarker();
     in.skipBytes(50);

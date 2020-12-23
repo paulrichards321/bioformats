@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -38,8 +38,6 @@ import loci.formats.meta.MetadataStore;
 import ome.units.quantity.ElectricPotential;
 import ome.units.quantity.Length;
 import ome.units.UNITS;
-
-import ome.xml.model.primitives.PositiveFloat;
 
 
 /**
@@ -101,7 +99,7 @@ public class AliconaReader extends FormatReader {
     // so instead of LMLMLM... storage, we have LLLLL...MMMMM...
     for (int i=0; i<numBytes; i++) {
       in.seek(textureOffset + (no * planeSize * (i + 1)));
-      in.skipBytes(y * (getSizeX() + pad));
+      in.skipBytes((long) y * (getSizeX() + pad));
       if (getSizeX() == w) {
         in.read(buf, i * w * h, w * h);
       }
@@ -240,7 +238,7 @@ public class AliconaReader extends FormatReader {
       // used when the dataset was acquired, i.e. detector settings.
       if (voltage != null) {
         store.setDetectorSettingsVoltage(
-                new ElectricPotential(new Double(voltage), UNITS.V), 0, 0);
+                new ElectricPotential(new Double(voltage), UNITS.VOLT), 0, 0);
 
         // link DetectorSettings to an actual Detector
         String detectorID = MetadataTools.createLSID("Detector", 0, 0);
@@ -248,7 +246,7 @@ public class AliconaReader extends FormatReader {
         store.setDetectorSettingsID(detectorID, 0, 0);
 
         // set required Detector type
-        store.setDetectorType(getDetectorType("Other"), 0, 0);
+        store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, 0);
       }
 
       // populate Objective data
@@ -259,11 +257,11 @@ public class AliconaReader extends FormatReader {
       }
 
       if (workingDistance != null) {
-        store.setObjectiveWorkingDistance(new Length(new Double(workingDistance), UNITS.MICROM), 0, 0);
+        store.setObjectiveWorkingDistance(new Length(new Double(workingDistance), UNITS.MICROMETER), 0, 0);
       }
 
-      store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
-      store.setObjectiveImmersion(getImmersion("Other"), 0, 0);
+      store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
+      store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, 0);
 
       // link Objective to an Image using ObjectiveSettings
       String objectiveID = MetadataTools.createLSID("Objective", 0, 0);
@@ -273,11 +271,11 @@ public class AliconaReader extends FormatReader {
       // populate Dimensions data
 
       if (pntX != null && pntY != null) {
-        double pixelSizeX = Double.parseDouble(pntX) * 1000000;
-        double pixelSizeY = Double.parseDouble(pntY) * 1000000;
+        double pixelSizeX = Double.parseDouble(pntX);
+        double pixelSizeY = Double.parseDouble(pntY);
 
-        Length sizeX = FormatTools.getPhysicalSizeX(pixelSizeX);
-        Length sizeY = FormatTools.getPhysicalSizeY(pixelSizeY);
+        Length sizeX = FormatTools.getPhysicalSizeX(pixelSizeX, UNITS.METER);
+        Length sizeY = FormatTools.getPhysicalSizeY(pixelSizeY, UNITS.METER);
 
         if (sizeX != null) {
           store.setPixelsPhysicalSizeX(sizeX, 0);

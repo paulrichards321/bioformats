@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -118,7 +118,7 @@ public class ImaconReader extends BaseTiffReader {
   protected void initStandardMetadata() throws FormatException, IOException {
     super.initStandardMetadata();
 
-    ifds = tiffParser.getIFDs();
+    ifds = tiffParser.getMainIFDs();
 
     core.clear();
     for (int i=0; i<ifds.size(); i++) {
@@ -150,7 +150,7 @@ public class ImaconReader extends BaseTiffReader {
 
     if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
       String xml = firstIFD.getIFDTextValue(XML_TAG).trim();
-      xml = xml.substring(xml.indexOf("<"));
+      xml = xml.substring(xml.indexOf('<'));
       XMLTools.parseXML(xml, new ImaconHandler());
     }
 
@@ -198,7 +198,7 @@ public class ImaconReader extends BaseTiffReader {
     if (getMetadataOptions().getMetadataLevel() != MetadataLevel.MINIMUM) {
       if (experimenterName == null) experimenterName = "";
 
-      int nameSpace = experimenterName.indexOf(" ");
+      int nameSpace = experimenterName.indexOf(' ');
       String firstName =
         nameSpace == -1 ? "" : experimenterName.substring(0, nameSpace);
       String lastName = nameSpace == -1 ? experimenterName :

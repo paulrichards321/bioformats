@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -28,7 +28,7 @@ package loci.formats.in;
 import java.io.IOException;
 import java.math.BigInteger;
 
-import loci.common.Constants;
+import loci.common.DataTools;
 import loci.common.RandomAccessInputStream;
 import loci.formats.CoreMetadata;
 import loci.formats.FormatException;
@@ -36,8 +36,9 @@ import loci.formats.FormatReader;
 import loci.formats.FormatTools;
 import loci.formats.MetadataTools;
 import loci.formats.meta.MetadataStore;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.units.quantity.Length;
+import ome.units.unit.Unit;
+import ome.units.UNITS;
 
 /**
  * MRCReader is the file format reader for MRC files.
@@ -56,7 +57,7 @@ public class MRCReader extends FormatReader {
   // there, according to: http://bio3d.colorado.edu/imod/doc/mrc_format.txt
 
   private static final String[] MRC_SUFFIXES =
-    {"mrc", "st", "ali", "map", "rec"};
+    {"mrc", "st", "ali", "map", "rec", "mrcs"};
 
   private static final int HEADER_SIZE = 1024;
   private static final int GRIDSIZE_OFFSET = 28;
@@ -82,7 +83,31 @@ public class MRCReader extends FormatReader {
   /** @see loci.formats.IFormatReader#isThisType(RandomAccessInputStream) */
   @Override
   public boolean isThisType(RandomAccessInputStream stream) throws IOException {
-    return FormatTools.validStream(stream, HEADER_SIZE, false);
+    if (!FormatTools.validStream(stream, HEADER_SIZE, false)) {
+      return false;
+    }
+    setLittleEndian(stream);
+    stream.seek(0);
+
+    int x = stream.readInt();
+    if ((x <= 0 || x >= stream.length()) &&
+      (DataTools.swap(x) <= 0 || DataTools.swap(x) >= stream.length()))
+    {
+      return false;
+    }
+    int y = stream.readInt();
+    if ((y <= 0 || y >= stream.length()) &&
+      (DataTools.swap(y) <= 0 || DataTools.swap(y) >= stream.length()))
+    {
+      return false;
+    }
+    int z = stream.readInt();
+    if ((z <= 0 || z >= stream.length()) &&
+      (DataTools.swap(z) <= 0 || DataTools.swap(z) >= stream.length()))
+    {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -140,13 +165,12 @@ public class MRCReader extends FormatReader {
 
     // check endianness
 
-    in.seek(ENDIANNESS_OFFSET);
-    m.littleEndian = in.read() == 68;
+    setLittleEndian(in);
+    m.littleEndian = in.isLittleEndian();
 
     // read dimension information from 1024 byte header
 
     in.seek(0);
-    in.order(isLittleEndian());
 
     m.sizeX = in.readInt();
     m.sizeY = in.readInt();
@@ -219,14 +243,22 @@ public class MRCReader extends FormatReader {
       int my = in.readInt();
       int mz = in.readInt();
 
-      // physical sizes are stored in ångströms, we want them in µm
-      xSize = (in.readFloat() / mx) / 10000.0;
-      ySize = (in.readFloat() / my) / 10000.0;
-      zSize = (in.readFloat() / mz) / 10000.0;
+      float xlen = in.readFloat();
+      float ylen = in.readFloat();
+      float zlen = in.readFloat();
 
-      addGlobalMeta("Pixel size (X)", xSize);
-      addGlobalMeta("Pixel size (Y)", ySize);
-      addGlobalMeta("Pixel size (Z)", zSize);
+      // physical sizes are stored in ångströms
+      xSize = (xlen / mx);
+      ySize = (ylen / my);
+      zSize = (zlen / mz);
+
+      addGlobalMeta("Grid size (X)", mx);
+      addGlobalMeta("Grid size (Y)", my);
+      addGlobalMeta("Grid size (Z)", mz);
+
+      addGlobalMeta("Cell size (X)", xlen);
+      addGlobalMeta("Cell size (Y)", ylen);
+      addGlobalMeta("Cell size (Z)", zlen);
 
       addGlobalMeta("Alpha angle", in.readFloat());
       addGlobalMeta("Beta angle", in.readFloat());
@@ -267,12 +299,19 @@ public class MRCReader extends FormatReader {
       }
     }
 
-    in.skipBytes(4);
+    int ispg = in.readInt();
+    addGlobalMeta("ISPG", ispg);
+    addGlobalMeta("Is data cube", ispg == 1);
 
     extHeaderSize = in.readInt();
 
+    in.skipBytes(8);
+
+    String extType = in.readString(4);
+    addGlobalMeta("Extended header type", extType);
+
     if (level != MetadataLevel.MINIMUM) {
-      in.skipBytes(64);
+      in.skipBytes(52);
 
       int idtype = in.readShort();
 
@@ -297,6 +336,8 @@ public class MRCReader extends FormatReader {
       for (int i=0; i<10; i++) {
         addGlobalMetaList("Label", in.readString(80));
       }
+
+      LOGGER.info("Skipping extended header of type '{}' and size {}", extType, extHeaderSize);
     }
 
     LOGGER.info("Populating metadata");
@@ -313,9 +354,15 @@ public class MRCReader extends FormatReader {
     MetadataTools.populatePixels(store, this);
 
     if (level != MetadataLevel.MINIMUM) {
-      Length sizeX = FormatTools.getPhysicalSizeX(xSize);
-      Length sizeY = FormatTools.getPhysicalSizeY(ySize);
-      Length sizeZ = FormatTools.getPhysicalSizeZ(zSize);
+      // this is the unit specified by the MRC documentation
+      Unit sizeUnit = UNITS.ANGSTROM;
+      if (extType.equals("AGAR")) {
+        // FEI software typically writes physical sizes in micrometers
+        sizeUnit = UNITS.MICROMETER;
+      }
+      Length sizeX = FormatTools.getPhysicalSizeX(xSize, sizeUnit);
+      Length sizeY = FormatTools.getPhysicalSizeY(ySize, sizeUnit);
+      Length sizeZ = FormatTools.getPhysicalSizeZ(zSize, sizeUnit);
 
       if (sizeX != null) {
         store.setPixelsPhysicalSizeX(sizeX, 0);
@@ -327,6 +374,24 @@ public class MRCReader extends FormatReader {
         store.setPixelsPhysicalSizeZ(sizeZ, 0);
       }
     }
+  }
+
+  /**
+   * Detect the correct endianness and set the stream accordingly.
+   * New-style headers have a value that can be checked, but older
+   * headers do not (and are assumed to be little endian).
+   * See the definition of offsets 196-216 in:
+   * https://bio3d.colorado.edu/imod/doc/mrc_format.txt
+   */
+  private void setLittleEndian(RandomAccessInputStream s) throws IOException {
+    s.seek(ENDIANNESS_OFFSET);
+    int check = s.read();
+    boolean little = check == 68;
+    boolean big = check == 17;
+    if (little == big) {
+      little = true;
+    }
+    s.order(little);
   }
 
 }

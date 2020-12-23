@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -45,9 +45,12 @@ import loci.formats.tiff.TiffParser;
 
 import ome.units.UNITS;
 import ome.units.quantity.Length;
+import ome.units.quantity.Time;
+import ome.units.unit.Unit;
+import ome.xml.model.enums.AcquisitionMode;
 import ome.xml.model.primitives.NonNegativeInteger;
-import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.PositiveInteger;
+import ome.xml.model.primitives.Timestamp;
 
 import org.xml.sax.Attributes;
 
@@ -60,13 +63,17 @@ public class OperettaReader extends FormatReader {
 
   // -- Constants --
 
-  private static final String XML_FILE = "Index.idx.xml";
+  private static final String[] XML_FILES = new String[] {"Index.idx.xml", "Index.ref.xml"};
   private static final int XML_TAG = 65500;
+  private static final String HARMONY_MAGIC = "Harmony";
+  // sometimes Operette, sometimes Operetta
+  private static final String OPERETTA_MAGIC = "Operett";
 
   // -- Fields --
 
   private Plane[][] planes;
   private MinimalTiffReader reader;
+  private ArrayList<String> metadataFiles = new ArrayList<String>();
 
   // -- Constructor --
 
@@ -75,6 +82,7 @@ public class OperettaReader extends FormatReader {
     super("PerkinElmer Operetta", new String[] {"tif", "tiff", "xml"});
     domains = new String[] {FormatTools.HCS_DOMAIN};
     suffixSufficient = false;
+    hasCompanionFiles = true;
     datasetDescription =
       "Directory with XML file and one .tif/.tiff file per plane";
   }
@@ -105,12 +113,24 @@ public class OperettaReader extends FormatReader {
   @Override
   public boolean isThisType(String name, boolean open) {
     String localName = new Location(name).getName();
-    if (localName.equals(XML_FILE)) {
-      return true;
+    boolean exists = false;
+    for (String XML_FILE : XML_FILES) {
+      if (localName.equals(XML_FILE)) {
+        exists = true;
+        break;
+      }
     }
-    Location parent = new Location(name).getAbsoluteFile().getParentFile();
-    Location xml = new Location(parent, XML_FILE);
-    if (!xml.exists()) {
+    if (!exists) {
+      Location parent = new Location(name).getAbsoluteFile().getParentFile();
+      for (String XML_FILE : XML_FILES) {
+        Location xml = new Location(parent, XML_FILE);
+        if (xml.exists()) {
+          exists = true;
+          break;
+        }
+      }
+    }
+    if (!exists) {
       return false;
     }
 
@@ -120,14 +140,42 @@ public class OperettaReader extends FormatReader {
   /* @see loci.formats.IFormatReader#isThisType(RandomAccessInputStream) */
   @Override
   public boolean isThisType(RandomAccessInputStream stream) throws IOException {
+    String xml = stream.readString(1024);
+    if (xml.indexOf(HARMONY_MAGIC) > 0 || xml.indexOf(OPERETTA_MAGIC) > 0) {
+      return true;
+    }
+    stream.seek(0);
     TiffParser p = new TiffParser(stream);
     IFD ifd = p.getFirstIFD();
     if (ifd == null) return false;
 
-    Object s = ifd.getIFDValue(XML_TAG);
-    if (s == null) return false;
-    String xml = s instanceof String[] ? ((String[]) s)[0] : s.toString();
-    return xml.indexOf("Operetta") < 1024;
+    xml = ifd.getIFDTextValue(XML_TAG);
+    if (xml == null) return false;
+    int harmonyIndex = xml.indexOf(HARMONY_MAGIC);
+    int operettaIndex = xml.indexOf(OPERETTA_MAGIC);
+    return (harmonyIndex >= 0 && harmonyIndex < 1024) ||
+      (operettaIndex >= 0 && operettaIndex < 1024);
+  }
+
+  /* @see loci.formats.IFormatReader#getUsedFiles(boolean) */
+  @Override
+  public String[] getUsedFiles(boolean noPixels) {
+    FormatTools.assertId(currentId, true, 1);
+
+    ArrayList<String> files = new ArrayList<String>();
+    files.addAll(metadataFiles);
+    if (!noPixels) {
+      for (Plane[] well : planes) {
+        for (Plane p : well) {
+          if (p != null && p.filename != null &&
+            new Location(p.filename).exists())
+          {
+            files.add(p.filename);
+          }
+        }
+      }
+    }
+    return files.toArray(new String[files.size()]);
   }
 
   /* @see loci.formats.IFormatReader#getSeriesUsedFiles(boolean) */
@@ -136,9 +184,13 @@ public class OperettaReader extends FormatReader {
     FormatTools.assertId(currentId, true, 1);
 
     ArrayList<String> files = new ArrayList<String>();
-    files.add(currentId);
+    files.addAll(metadataFiles);
     for (Plane p : planes[getSeries()]) {
-      files.add(p.filename);
+      if (p != null && p.filename != null &&
+        new Location(p.filename).exists())
+      {
+        files.add(p.filename);
+      }
     }
 
     return files.toArray(new String[files.size()]);
@@ -154,6 +206,7 @@ public class OperettaReader extends FormatReader {
       }
       reader = null;
       planes = null;
+      metadataFiles.clear();
     }
   }
 
@@ -166,15 +219,38 @@ public class OperettaReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
+    Arrays.fill(buf, (byte) 0);
     if (getSeries() < planes.length && no < planes[getSeries()].length) {
       Plane p = planes[getSeries()][no];
 
-      if (new Location(p.filename).exists()) {
+      if (p != null && p.filename != null && new Location(p.filename).exists()) {
         if (reader == null) {
           reader = new MinimalTiffReader();
         }
         reader.setId(p.filename);
-        reader.openBytes(0, buf, x, y, w, h);
+        if (reader.getSizeX() >= getSizeX() && reader.getSizeY() >= getSizeY()) {
+          reader.openBytes(0, buf, x, y, w, h);
+        }
+        else {
+          LOGGER.warn("Image dimension mismatch in {}", p.filename);
+
+          // the XY dimensions of this TIFF are smaller than expected,
+          // so read the stored image into the upper left corner
+          // the bottom and right side will have a black border
+          if (x < reader.getSizeX() && y < reader.getSizeY()) {
+            int realWidth = (int) Math.min(w, reader.getSizeX() - x);
+            int realHeight = (int) Math.min(h, reader.getSizeY() - y);
+            byte[] realPixels =
+              reader.openBytes(0, x, y, realWidth, realHeight);
+
+            int bpp = FormatTools.getBytesPerPixel(getPixelType());
+            int row = realWidth * bpp;
+            int outputRow = w * bpp;
+            for (int yy=0; yy<realHeight; yy++) {
+              System.arraycopy(realPixels, yy * row, buf, yy * outputRow, row);
+            }
+          }
+        }
         reader.close();
       }
     }
@@ -191,7 +267,7 @@ public class OperettaReader extends FormatReader {
 
     if (!checkSuffix(id, "xml")) {
       Location parent = new Location(id).getAbsoluteFile().getParentFile();
-      Location xml = new Location(parent, XML_FILE);
+      Location xml = new Location(parent, XML_FILES[0]);
       if (!xml.exists()) {
         throw new FormatException("Could not find XML file " +
           xml.getAbsolutePath());
@@ -201,6 +277,49 @@ public class OperettaReader extends FormatReader {
     }
     else {
       super.initFile(id);
+    }
+
+    // assemble list of other metadata/analysis results files
+    Location currentFile = new Location(currentId).getAbsoluteFile();
+    metadataFiles.add(currentFile.getAbsolutePath());
+    Location parent = currentFile.getParentFile().getParentFile();
+    String[] list = parent.list(true);
+    Arrays.sort(list);
+    for (String f : list) {
+      Location path = new Location(parent, f);
+      if (path.isDirectory()) {
+        // the current file's parent directory will usually be "Images",
+        // but may have been renamed especially if there are no
+        // analysis results
+        if (f.equals(currentFile.getParentFile().getName())) {
+          LOGGER.trace("Skipping current directory {}", f);
+          continue;
+        }
+        // Skipping other directories containing Operetta metadata files
+        for (String XML_FILE : XML_FILES) {
+          if (new Location(path, XML_FILE).exists()) {
+            LOGGER.trace("Skipping {} containing {}", f, XML_FILE);
+            continue;
+          }
+        }
+        String[] companionFolders = path.list(true);
+        Arrays.sort(companionFolders);
+        for (String folder : companionFolders) {
+          LOGGER.trace("Found folder {}", folder);
+          if (!checkSuffix(folder, "tiff"))
+          {
+            String metadataFile = new Location(path, folder).getAbsolutePath();
+            if (!metadataFile.equals(currentFile.getAbsolutePath())) {
+              metadataFiles.add(metadataFile);
+              LOGGER.trace("Adding metadata file {}", metadataFile);
+            }
+          }
+        }
+      }
+      else {
+        metadataFiles.add(path.getAbsolutePath());
+        LOGGER.trace("Adding metadata file {}", path.getAbsolutePath());
+      }
     }
 
     // parse plate layout and image dimensions from the XML file
@@ -291,8 +410,6 @@ public class OperettaReader extends FormatReader {
     for (int i=0; i<seriesCount; i++) {
       CoreMetadata ms = new CoreMetadata();
       core.add(ms);
-      ms.sizeX = planes[i][0].x;
-      ms.sizeY = planes[i][0].y;
       ms.sizeZ = uniqueZs.size();
       ms.sizeC = uniqueCs.size();
       ms.sizeT = uniqueTs.size();
@@ -300,21 +417,99 @@ public class OperettaReader extends FormatReader {
       ms.rgb = false;
       ms.imageCount = getSizeZ() * getSizeC() * getSizeT();
 
-      RandomAccessInputStream s =
-        new RandomAccessInputStream(planes[i][0].filename, 16);
-      TiffParser parser = new TiffParser(s);
-      parser.setDoCaching(false);
+      int planeIndex = 0;
+      while (planeIndex < planes[i].length && planes[i][planeIndex] == null) {
+        LOGGER.debug("skipping null plane series = {}, plane = {}", i, planeIndex);
+        planeIndex++;
+      }
+      if (planeIndex >= planes[i].length) {
+        if (i > 0) {
+          ms.sizeX = core.get(i - 1).sizeX;
+          ms.sizeY = core.get(i - 1).sizeY;
+          ms.pixelType = core.get(i - 1).pixelType;
+          ms.littleEndian = core.get(i - 1).littleEndian;
+        }
+        else {
+          LOGGER.warn("Could not find valid plane for series 0");
+        }
+      }
+      else {
+        ms.sizeX = planes[i][planeIndex].x;
+        ms.sizeY = planes[i][planeIndex].y;
+        String filename = planes[i][planeIndex].filename;
+        while ((filename == null || !new Location(filename).exists()) &&
+          planeIndex < planes[i].length - 1)
+        {
+          LOGGER.debug("Missing TIFF file: {}", filename);
+          planeIndex++;
+          filename = planes[i][planeIndex].filename;
+        }
 
-      IFD firstIFD = parser.getFirstIFD();
-      ms.littleEndian = firstIFD.isLittleEndian();
-      ms.pixelType = firstIFD.getPixelType();
-      s.close();
+        if (filename != null && new Location(filename).exists()) {
+          try (RandomAccessInputStream s =
+            new RandomAccessInputStream(filename, 16)) {
+              TiffParser parser = new TiffParser(s);
+              parser.setDoCaching(false);
+
+              IFD firstIFD = parser.getFirstIFD();
+              ms.littleEndian = firstIFD.isLittleEndian();
+              ms.pixelType = firstIFD.getPixelType();
+          }
+        }
+        else if (i > 0) {
+          LOGGER.warn("Could not find valid TIFF file for series {}", i);
+          ms.littleEndian = core.get(0).littleEndian;
+          ms.pixelType = core.get(0).pixelType;
+        }
+        else {
+          LOGGER.warn("Could not find valid TIFF file for series 0; pixel type may be wrong");
+        }
+      }
     }
+
+    // some series may not have valid XY dimensions,
+    // particularly if the first series was not recorded in the Index.idx.xml
+    // look for the first series that has valid dimensions and copy as needed
+    // this will allow blank planes to be returned instead of throwing an exception
+    //
+    // unrecorded series are kept so that fields can be compared across wells
+    int firstValidSeries = -1;
+    for (int i=0; i<seriesCount; i++) {
+      if (core.get(i).sizeX > 0 && core.get(i).sizeY > 0) {
+        firstValidSeries = i;
+        break;
+      }
+    }
+    if (firstValidSeries < 0) {
+      throw new FormatException("No valid images found");
+    }
+    for (int i=0; i<seriesCount; i++) {
+      if (core.get(i).sizeX == 0 || core.get(i).sizeY == 0) {
+        core.get(i).sizeX = core.get(firstValidSeries).sizeX;
+        core.get(i).sizeY = core.get(firstValidSeries).sizeY;
+        core.get(i).pixelType = core.get(firstValidSeries).pixelType;
+        core.get(i).littleEndian = core.get(firstValidSeries).littleEndian;
+      }
+    }
+
+    addGlobalMeta("Plate name", handler.getPlateName());
+    addGlobalMeta("Plate description", handler.getPlateDescription());
+    addGlobalMeta("Plate ID", handler.getPlateIdentifier());
+    addGlobalMeta("Measurement ID", handler.getMeasurementID());
 
     // populate the MetadataStore
 
     MetadataStore store = makeFilterMetadata();
     MetadataTools.populatePixels(store, this, true);
+
+    String instrument = MetadataTools.createLSID("Instrument", 0);
+    store.setInstrumentID(instrument, 0);
+    String objective = MetadataTools.createLSID("Objective", 0, 0);
+    store.setObjectiveID(objective, 0, 0);
+    if (planes[0][0] != null) {
+      store.setObjectiveNominalMagnification(planes[0][0].magnification, 0, 0);
+      store.setObjectiveLensNA(planes[0][0].lensNA, 0, 0);
+    }
 
     store.setPlateID(MetadataTools.createLSID("Plate", 0), 0);
     store.setPlateRows(new PositiveInteger(handler.getPlateRows()), 0);
@@ -326,6 +521,11 @@ public class OperettaReader extends FormatReader {
     PositiveInteger fieldCount = FormatTools.getMaxFieldCount(fields.length);
     if (fieldCount != null) {
       store.setPlateAcquisitionMaximumFieldCount(fieldCount, 0, 0);
+    }
+
+    String startTime = handler.getMeasurementTime();
+    if (startTime != null) {
+      store.setPlateAcquisitionStartTime(new Timestamp(startTime), 0, 0);
     }
 
     for (int row=0; row<rows.length; row++) {
@@ -345,11 +545,19 @@ public class OperettaReader extends FormatReader {
           String imageID = MetadataTools.createLSID("Image", imageIndex);
           store.setImageID(imageID, imageIndex);
           store.setWellSampleImageRef(imageID, 0, well, field);
+          store.setImageInstrumentRef(instrument, imageIndex);
+          store.setObjectiveSettingsID(objective, imageIndex);
 
           String name = "Well " + (well + 1) + ", Field " + (field + 1);
           store.setImageName(name, imageIndex);
           store.setPlateAcquisitionWellSampleRef(
             wellSampleID, 0, 0, imageIndex);
+
+          if (planes[imageIndex][0] != null && planes[imageIndex][0].absoluteTime != null) {
+            store.setImageAcquisitionDate(planes[imageIndex][0].absoluteTime, imageIndex);
+            store.setWellSamplePositionX(planes[imageIndex][0].positionX, 0, well, field);
+            store.setWellSamplePositionY(planes[imageIndex][0].positionY, 0, well, field);
+          }
         }
       }
     }
@@ -367,18 +575,48 @@ public class OperettaReader extends FormatReader {
         store.setImageExperimenterRef(experimenterID, i);
 
         for (int c=0; c<getSizeC(); c++) {
-          store.setChannelName(planes[i][c].channelName, i, c);
+          if (planes[i][c] != null && planes[i][c].channelName != null) {
+            store.setChannelName(planes[i][c].channelName, i, c);
+          }
+          if (planes[i][c] != null) {
+            if (planes[i][c].acqType != null) {
+              store.setChannelAcquisitionMode(
+                MetadataTools.getAcquisitionMode(planes[i][c].acqType), i, c);
+            }
+            if (planes[i][c].channelType != null) {
+              store.setChannelContrastMethod(
+                MetadataTools.getContrastMethod(planes[i][c].channelType), i, c);
+            }
+            store.setChannelEmissionWavelength(
+              FormatTools.getEmissionWavelength(planes[i][c].emWavelength), i, c);
+            store.setChannelExcitationWavelength(
+              FormatTools.getExcitationWavelength(planes[i][c].exWavelength), i, c);
+          }
         }
 
-        store.setPixelsPhysicalSizeX(
-          FormatTools.getPhysicalSizeX(planes[i][0].resolutionX), i);
-        store.setPixelsPhysicalSizeY(
-          FormatTools.getPhysicalSizeY(planes[i][0].resolutionY), i);
+        if (planes[i][0] != null) {
+          store.setPixelsPhysicalSizeX(
+            FormatTools.getPhysicalSizeX(planes[i][0].resolutionX), i);
+          store.setPixelsPhysicalSizeY(
+            FormatTools.getPhysicalSizeY(planes[i][0].resolutionY), i);
+
+          if (getSizeZ() > 1) {
+            Unit<Length> firstZUnit = planes[i][0].positionZ.unit();
+            double firstZ = planes[i][0].positionZ.value().doubleValue();
+            double lastZ = planes[i][planes[i].length - 1].positionZ.value(firstZUnit).doubleValue();
+            double averageStep = (lastZ - firstZ) / (getSizeZ() - 1);
+            store.setPixelsPhysicalSizeZ(FormatTools.getPhysicalSizeZ(averageStep, firstZUnit), i);
+          }
+        }
 
         for (int p=0; p<getImageCount(); p++) {
-          store.setPlanePositionX(planes[i][p].positionX, i, p);
-          store.setPlanePositionY(planes[i][p].positionY, i, p);
-          store.setPlanePositionZ(planes[i][p].positionZ, i, p);
+          if (planes[i][p] != null) {
+            store.setPlanePositionX(planes[i][p].positionX, i, p);
+            store.setPlanePositionY(planes[i][p].positionY, i, p);
+            store.setPlanePositionZ(planes[i][p].positionZ, i, p);
+            store.setPlaneExposureTime(planes[i][p].exposureTime, i, p);
+            store.setPlaneDeltaT(planes[i][p].deltaT, i, p);
+          }
         }
       }
 
@@ -395,13 +633,16 @@ public class OperettaReader extends FormatReader {
 
     private String displayName;
     private String plateID;
+    private String measurementID;
     private String measurementTime;
     private String plateName;
     private String plateDescription;
     private int plateRows, plateCols;
     private ArrayList<Plane> planes = new ArrayList<Plane>();
 
-    private StringBuffer currentValue = new StringBuffer();
+    private final StringBuilder currentValue = new StringBuilder();
+
+    private boolean isHarmony = false;
 
     // -- OperettaHandler API methods --
 
@@ -415,6 +656,10 @@ public class OperettaReader extends FormatReader {
 
     public String getPlateIdentifier() {
       return plateID;
+    }
+
+    public String getMeasurementID() {
+      return measurementID;
     }
 
     public String getMeasurementTime() {
@@ -455,6 +700,9 @@ public class OperettaReader extends FormatReader {
       if (qName.equals("Image") && attributes.getValue("id") == null) {
         activePlane = new Plane();
       }
+      else if (qName.equals("EvaluationInputData")) {
+        isHarmony = attributes.getValue("xmlns").indexOf(HARMONY_MAGIC) > 0;
+      }
     }
 
     @Override
@@ -465,6 +713,9 @@ public class OperettaReader extends FormatReader {
       }
       else if ("PlateID".equals(currentName)) {
         plateID = value;
+      }
+      else if ("MeasurementID".equals(currentName)) {
+        measurementID = value;
       }
       else if ("MeasurementStartTime".equals(currentName)) {
         measurementTime = value;
@@ -483,9 +734,16 @@ public class OperettaReader extends FormatReader {
       }
       else if (activePlane != null) {
         if ("URL".equals(currentName)) {
-          Location parent =
-            new Location(currentId).getAbsoluteFile().getParentFile();
-          activePlane.filename = new Location(parent, value).getAbsolutePath();
+          if (value.length() > 0) {
+            if (value.startsWith("http")) {
+              activePlane.filename = value;
+            }
+            else {
+              Location parent =
+                new Location(currentId).getAbsoluteFile().getParentFile();
+              activePlane.filename = new Location(parent, value).getAbsolutePath();
+            }
+          }
         }
         else if ("Row".equals(currentName)) {
           activePlane.row = Integer.parseInt(value) - 1;
@@ -524,18 +782,23 @@ public class OperettaReader extends FormatReader {
         }
         else if ("PositionX".equals(currentName)) {
           // position stored in meters
-          final double meters = Double.parseDouble(value) * 1000000;
-          activePlane.positionX = new Length(meters, UNITS.REFERENCEFRAME);
+          final double meters = Double.parseDouble(value);
+          // see "OrientationMatrix" below
+          activePlane.positionX = new Length(meters, UNITS.METRE);
         }
         else if ("PositionY".equals(currentName)) {
           // position stored in meters
-          final double meters = Double.parseDouble(value) * 1000000;
-          activePlane.positionY = new Length(meters, UNITS.REFERENCEFRAME);
+          final double meters = Double.parseDouble(value);
+          // see "OrientationMatrix" below
+          activePlane.positionY = new Length(meters, UNITS.METRE);
         }
-        else if ("AbsPositionZ".equals(currentName)) {
+        else if (("AbsPositionZ".equals(currentName) && !isHarmony) ||
+          ("PositionZ".equals(currentName) && isHarmony))
+        {
           // position stored in meters
-          final double meters = Double.parseDouble(value) * 1000000;
-          activePlane.positionZ = new Length(meters, UNITS.REFERENCEFRAME);
+          final double meters = Double.parseDouble(value);
+          // see "OrientationMatrix" below
+          activePlane.positionZ = new Length(meters, UNITS.METRE);
         }
         else if ("ObjectiveMagnification".equals(currentName)) {
           activePlane.magnification = Double.parseDouble(value);
@@ -549,11 +812,45 @@ public class OperettaReader extends FormatReader {
         else if ("MainExcitationWavelength".equals(currentName)) {
           activePlane.exWavelength = Double.parseDouble(value);
         }
+        else if ("ExposureTime".equals(currentName)) {
+          activePlane.exposureTime = new Time(Double.parseDouble(value), UNITS.SECOND);
+        }
+        else if ("MeasurementTimeOffset".equals(currentName)) {
+          activePlane.deltaT = new Time(Double.parseDouble(value), UNITS.SECOND);
+        }
+        else if ("AbsTime".equals(currentName)) {
+          activePlane.absoluteTime = new Timestamp(value);
+        }
+        else if ("AcquisitionType".equals(currentName)) {
+          activePlane.acqType = value;
+        }
+        else if ("ChannelType".equals(currentName)) {
+          activePlane.channelType = value;
+        }
+        else if ("OrientationMatrix".equals(currentName)) {
+          // matrix that indicates how to interpret plane position values
+          String[] rows = value.split("]");
+          Double[][] matrix = new Double[rows.length][];
+          for (int i=0; i<rows.length; i++) {
+            rows[i] = rows[i].replaceAll("\\[", "").replaceAll(",", " ");
+            String[] values = rows[i].trim().split(" ");
+            matrix[i] = new Double[values.length];
+            for (int j=0; j<matrix[i].length; j++) {
+              matrix[i][j] = DataTools.parseDouble(values[j]);
+            }
+          }
+          if (matrix.length > 2 && matrix[0].length > 0 &&
+            matrix[1].length > 1 && matrix[2].length > 2)
+          {
+            activePlane.orientationMatrix = matrix;
+          }
+        }
       }
 
       currentName = null;
 
       if (qName.equals("Image") && activePlane != null) {
+        activePlane.applyMatrix();
         planes.add(activePlane);
       }
     }
@@ -580,8 +877,56 @@ public class OperettaReader extends FormatReader {
     public double exWavelength;
     public double magnification;
     public double lensNA;
+    public Time exposureTime;
+    public Time deltaT;
+    public Timestamp absoluteTime;
+    public String acqType;
+    public String channelType;
+    public Double[][] orientationMatrix;
+
+    /**
+     * Applies the orientationMatrix to positionX, positionY, and positionZ.
+     */
+    public void applyMatrix() {
+      if (positionX == null || positionY == null ||
+        positionZ == null || orientationMatrix == null)
+      {
+        return;
+      }
+      double[] v = new double[] {positionX.value().doubleValue(),
+        positionY.value().doubleValue(), positionZ.value().doubleValue()};
+      double[] newValues = new double[] {0, 0, 0};
+      for (int row=0; row<orientationMatrix.length; row++) {
+        for (int col=0; col<orientationMatrix[row].length; col++) {
+          if (col < v.length) {
+            newValues[row] += orientationMatrix[row][col] * v[col];
+          }
+          else {
+            newValues[row] += orientationMatrix[row][col];
+          }
+        }
+      }
+      positionX = new Length(newValues[0], positionX.unit());
+      positionY = new Length(newValues[1], positionY.unit());
+      positionZ = new Length(newValues[2], positionZ.unit());
+    }
   }
 
-  // -- Helper methods --
+  @Override
+  protected AcquisitionMode getAcquisitionMode(String mode) throws FormatException {
+    if (mode == null) {
+      return null;
+    }
+    if (mode.equalsIgnoreCase("nipkowconfocal")) {
+      return AcquisitionMode.SPINNINGDISKCONFOCAL;
+    }
+    else if (mode.equalsIgnoreCase("confocal")) {
+      return AcquisitionMode.LASERSCANNINGCONFOCALMICROSCOPY;
+    }
+    else if (mode.equalsIgnoreCase("nonconfocal")) {
+      return AcquisitionMode.WIDEFIELD;
+    }
+    return MetadataTools.getAcquisitionMode(mode);
+  }
 
 }

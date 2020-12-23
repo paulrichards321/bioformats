@@ -2,7 +2,7 @@
  * #%L
  * BSD implementations of Bio-Formats readers and writers
  * %%
- * Copyright (C) 2015 Open Microscopy Environment:
+ * Copyright (C) 2015 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -32,20 +32,18 @@
 
 package loci.formats.services;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.Date;
 import java.util.HashMap;
 
+import loci.common.RandomAccessInputStream;
 import loci.common.services.AbstractService;
 import loci.common.services.ServiceException;
 
 import com.drew.imaging.ImageMetadataReader;
 import com.drew.metadata.exif.ExifSubIFDDirectory;
 import com.drew.metadata.Metadata;
-import com.drew.metadata.Directory;
 import com.drew.metadata.Tag;
-import com.drew.imaging.ImageProcessingException;
 
 /**
  *
@@ -61,21 +59,20 @@ public class EXIFServiceImpl extends AbstractService implements EXIFService {
     checkClassDependency(ImageMetadataReader.class);
     // check for xmpcore.jar
     checkClassDependency(com.adobe.xmp.XMPMeta.class);
-    // check for xercesImpl.jar
-    checkClassDependency(org.apache.xerces.dom.NodeImpl.class);
   }
 
   // -- EXIFService API methods --
 
   @Override
   public void initialize(String file) throws ServiceException, IOException {
-    try {
-      File jpegFile = new File(file);
-      Metadata metadata = ImageMetadataReader.readMetadata(jpegFile);
-      directory = metadata.getDirectory(ExifSubIFDDirectory.class);
-    }
-    catch (Throwable e) {
-      throw new ServiceException("Could not read EXIF data", e);
+    try (RandomAccessInputStream jpegFile = new RandomAccessInputStream(file)) {
+      try {
+        Metadata metadata = ImageMetadataReader.readMetadata(jpegFile);
+        directory = metadata.getFirstDirectoryOfType(ExifSubIFDDirectory.class);
+      }
+      catch (Throwable e) {
+        throw new ServiceException("Could not read EXIF data", e);
+      }
     }
   }
 

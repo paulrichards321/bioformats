@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -94,7 +94,7 @@ public class IvisionReader extends FormatReader {
     String version = stream.readString(3);
     try {
       Double.parseDouble(version);
-      return version.indexOf(".") != -1 && version.indexOf("-") == -1;
+      return version.indexOf('.') != -1 && version.indexOf('-') == -1;
     }
     catch (NumberFormatException e) { }
     return false;
@@ -109,7 +109,7 @@ public class IvisionReader extends FormatReader {
   {
     FormatTools.checkPlaneParameters(this, no, buf.length, x, y, w, h);
 
-    int planeSize = getSizeX() * getSizeY() * getSizeC();
+    long planeSize = (long) getSizeX() * getSizeY() * getSizeC();
     if (color16) planeSize = 2 * (planeSize / 3);
     else if (squareRoot) planeSize *= 2;
     else if (hasPaddingByte) {
@@ -129,15 +129,15 @@ public class IvisionReader extends FormatReader {
     }
     else if (hasPaddingByte) {
       int next = 0;
-      in.skipBytes(y * getSizeX() * getSizeC());
+      in.skipBytes((long) y * getSizeX() * getSizeC());
       for (int row=0; row<h; row++) {
-        in.skipBytes(x * getSizeC());
+        in.skipBytes((long) x * getSizeC());
         for (int col=0; col<w; col++) {
           in.skipBytes(1);
           in.read(buf, next, getSizeC());
           next += getSizeC();
         }
-        in.skipBytes(getSizeC() * (getSizeX() - w - x));
+        in.skipBytes((long) getSizeC() * (getSizeX() - w - x));
       }
     }
     else readPlane(in, x, y, w, h, buf);
@@ -248,7 +248,7 @@ public class IvisionReader extends FormatReader {
         in.seek(in.getFilePointer() - 5);
 
         String xml = in.readString((int) (in.length() - in.getFilePointer()));
-        xml = xml.substring(xml.indexOf("<"), xml.lastIndexOf("plist>") + 6);
+        xml = xml.substring(xml.indexOf('<'), xml.lastIndexOf("plist>") + 6);
         IvisionHandler handler = new IvisionHandler();
         try {
           XMLTools.parseXML(xml, handler);
@@ -294,7 +294,7 @@ public class IvisionReader extends FormatReader {
           LOGGER.debug("Failed to parse time increment", e);
         }
         if (increment != null) {
-          store.setPixelsTimeIncrement(new Time(increment, UNITS.S), 0);
+          store.setPixelsTimeIncrement(new Time(increment, UNITS.SECOND), 0);
         }
       }
 
@@ -302,8 +302,8 @@ public class IvisionReader extends FormatReader {
       store.setObjectiveID(objectiveID, 0, 0);
       store.setObjectiveSettingsID(objectiveID, 0);
 
-      store.setObjectiveCorrection(getCorrection("Other"), 0, 0);
-      store.setObjectiveImmersion(getImmersion("Other"), 0, 0);
+      store.setObjectiveCorrection(MetadataTools.getCorrection("Other"), 0, 0);
+      store.setObjectiveImmersion(MetadataTools.getImmersion("Other"), 0, 0);
 
       if (lensNA != null) store.setObjectiveLensNA(lensNA, 0, 0);
       if (magnification != null) {
@@ -317,9 +317,9 @@ public class IvisionReader extends FormatReader {
       store.setDetectorID(detectorID, 0, 0);
       store.setDetectorSettingsID(detectorID, 0, 0);
 
-      store.setDetectorType(getDetectorType("Other"), 0, 0);
+      store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, 0);
 
-      store.setDetectorSettingsBinning(getBinning(binX + "x" + binY), 0, 0);
+      store.setDetectorSettingsBinning(MetadataTools.getBinning(binX + "x" + binY), 0, 0);
       if (gain != null) {
         try {
           store.setDetectorSettingsGain(new Double(gain), 0, 0);

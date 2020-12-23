@@ -1,8 +1,8 @@
 /*
  * #%L
- * BSD implementations of Bio-Formats readers and writers
+ * Top-level reader and writer APIs
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -32,12 +32,20 @@
 
 package loci.formats;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
+import java.net.MalformedURLException;
 import java.util.Properties;
 import java.util.Vector;
+import java.util.jar.Attributes;
+import java.util.jar.Manifest;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import loci.common.Constants;
+import loci.common.DataTools;
 import loci.common.DateTools;
 import loci.common.RandomAccessInputStream;
 import loci.common.ReflectException;
@@ -52,8 +60,12 @@ import loci.formats.meta.MetadataStore;
 import loci.formats.services.OMEXMLService;
 import loci.formats.services.OMEXMLServiceImpl;
 
+import ome.xml.model.enums.DimensionOrder;
 import ome.xml.model.enums.EnumerationException;
+
 import ome.xml.model.enums.UnitsLength;
+import ome.xml.model.enums.handlers.UnitsLengthEnumHandler;
+import ome.xml.model.enums.UnitsTime;
 import ome.xml.model.primitives.PrimitiveNumber;
 import ome.xml.model.primitives.PositiveFloat;
 import ome.xml.model.primitives.PositiveInteger;
@@ -198,42 +210,99 @@ public final class FormatTools {
 
   // -- Constants - versioning --
 
-  public static final Properties VERSION_PROPERTIES = loadProperties();
+  public static final Properties VERSION_PROPERTIES = null;
 
-  /** Current VCS revision. */
-  public static final String VCS_REVISION =
-    VERSION_PROPERTIES.getProperty("vcs.revision");
+  /** Current VCS revision.
+   */
+  public static final String VCS_REVISION;
 
-  /** Current VCS revision (short form). */
-  public static final String VCS_SHORT_REVISION =
-    VERSION_PROPERTIES.getProperty("vcs.shortrevision");
+  /** Current VCS revision (short form).
+   * @deprecated Use the general {@link #VCS_REVISION} field.
+   */
+  @Deprecated
+  public static final String VCS_SHORT_REVISION;
 
   /** Date on which this release was built. */
-  public static final String DATE = VERSION_PROPERTIES.getProperty("date");
+  public static final String DATE;
 
   /** Year in which this release was built. */
-  public static final String YEAR = VERSION_PROPERTIES.getProperty("year");
+  public static final String YEAR;
 
   /** Version number of this release. */
-  public static final String VERSION =
-    VERSION_PROPERTIES.getProperty("release.version");
+  public static final String VERSION;
 
-  public static final String PROPERTY_FILE = "version.properties";
+  /** Value to use when setting creator/software fields in exported files. */
+  public static final String CREATOR;
 
+  /**
+   * @deprecated The property file is no longer used.
+   */
+  @Deprecated
+  public static final String PROPERTY_FILE = null;
+
+  /**
+   * @deprecated This method should no longer be used.  The properties
+   * are now obtained from the jar manifest.
+   */
+  @Deprecated
   static Properties loadProperties() {
     Properties properties = new Properties();
-    try {
-      InputStream propertyFile = Class.forName(
-        "loci.formats.FormatTools").getResourceAsStream(PROPERTY_FILE);
-      properties.load(propertyFile);
-    }
-    catch (ClassNotFoundException e) {
-      LOGGER.debug("Failed to load version properties", e);
-    }
-    catch (IOException e) {
-      LOGGER.debug("Failed to load version properties", e);
-    }
+    LOGGER.debug("loadProperties() is deprecated");
     return properties;
+  }
+
+  private static Manifest loadManifest() {
+    String className = FormatTools.class.getSimpleName() + ".class";
+    String classPath = FormatTools.class.getResource(className).toString();
+    if (!classPath.startsWith("jar")) {
+      return null;
+    }
+
+    String manifestPath = classPath.substring(0, classPath.lastIndexOf("!") + 1) +
+      "/META-INF/MANIFEST.MF";
+
+    try{
+      Manifest manifest = new Manifest(new URL(manifestPath).openStream());
+      return manifest;
+    }
+    catch (MalformedURLException exc) {
+    }
+    catch (IOException exc) {
+    }
+
+    return null;
+  }
+
+  static
+  {
+    Manifest manifest = loadManifest();
+    Attributes attr;
+
+    if(manifest != null) {
+      attr = manifest.getMainAttributes();
+    } else {
+      attr = new Attributes();
+    }
+
+    if (attr.getValue("Implementation-Version") != null) {
+      VERSION = attr.getValue("Implementation-Version");
+    } else {
+      VERSION = "(unknown version)";
+    }
+    CREATOR = "OME Bio-Formats " + VERSION;
+    if (attr.getValue("Implementation-Build") != null) {
+      VCS_REVISION = attr.getValue("Implementation-Build");
+    } else {
+      VCS_REVISION = "(unknown revision)";
+    }
+    VCS_SHORT_REVISION = VCS_REVISION;
+    if (attr.getValue("Implementation-Date") != null) {
+      DATE = attr.getValue("Implementation-Date");
+      YEAR = DATE.substring(DATE.lastIndexOf(' ') + 1);
+    } else {
+      DATE = "(unknown date)";
+      YEAR = "(unknown year)";
+    }
   }
 
   // -- Constants - domains --
@@ -310,15 +379,15 @@ public final class FormatTools {
 
   /** URL of Bio-Formats web page. */
   public static final String URL_BIO_FORMATS =
-    "http://www.openmicroscopy.org/site/products/bio-formats";
+    "https://www.openmicroscopy.org/bio-formats";
 
   /** URL of 'Bio-Formats as a Java Library' web page. */
   public static final String URL_BIO_FORMATS_LIBRARIES =
-    "http://www.openmicroscopy.org/site/support/bio-formats/developers/java-library.html";
+    "https://docs.openmicroscopy.org/bio-formats/" + VERSION + "/developers/java-library.html";
 
   /** URL of OME-TIFF web page. */
   public static final String URL_OME_TIFF =
-    "http://www.openmicroscopy.org/site/support/ome-model/ome-tiff/";
+    "https://docs.openmicroscopy.org/latest/ome-model/ome-tiff/";
 
   // -- Constructor --
 
@@ -389,9 +458,9 @@ public final class FormatTools {
     if (!order.startsWith("XY") && !order.startsWith("YX")) {
       throw new IllegalArgumentException("Invalid dimension order: " + order);
     }
-    int iz = order.indexOf("Z") - 2;
-    int ic = order.indexOf("C") - 2;
-    int it = order.indexOf("T") - 2;
+    int iz = order.indexOf('Z') - 2;
+    int ic = order.indexOf('C') - 2;
+    int it = order.indexOf('T') - 2;
     if (iz < 0 || iz > 2 || ic < 0 || ic > 2 || it < 0 || it > 2) {
       throw new IllegalArgumentException("Invalid dimension order: " + order);
     }
@@ -539,9 +608,9 @@ public final class FormatTools {
     if (!order.startsWith("XY") && !order.startsWith("YX")) {
       throw new IllegalArgumentException("Invalid dimension order: " + order);
     }
-    int iz = order.indexOf("Z") - 2;
-    int ic = order.indexOf("C") - 2;
-    int it = order.indexOf("T") - 2;
+    int iz = order.indexOf('Z') - 2;
+    int ic = order.indexOf('C') - 2;
+    int it = order.indexOf('T') - 2;
     if (iz < 0 || iz > 2 || ic < 0 || ic > 2 || it < 0 || it > 2) {
       throw new IllegalArgumentException("Invalid dimension order: " + order);
     }
@@ -563,7 +632,7 @@ public final class FormatTools {
 
     // check image count
     if (num <= 0) {
-      throw new IllegalArgumentException("Invalid image count: " + num);
+      throw new IllegalArgumentException("Invalid plane count: " + num);
     }
     if (num != zSize * cSize * tSize) {
       // if this happens, there is probably a bug in metadata population --
@@ -574,7 +643,7 @@ public final class FormatTools {
         ", total=" + num + ")");
     }
     if (index < 0 || index >= num) {
-      throw new IllegalArgumentException("Invalid image index: " +
+      throw new IllegalArgumentException("Invalid plane index: " +
         index + "/" + num);
     }
 
@@ -1021,11 +1090,30 @@ public final class FormatTools {
   public static String getFilename(int series, int image, IFormatReader r,
     String pattern) throws FormatException, IOException
   {
-    MetadataStore store = r.getMetadataStore();
-    MetadataRetrieve retrieve = store instanceof MetadataRetrieve ?
-      (MetadataRetrieve) store : new DummyMetadata();
+    return getFilename(series, image, r, pattern, false);
+  }
 
-    String filename = pattern.replaceAll(SERIES_NUM, String.valueOf(series));
+  /**
+   * @throws FormatException Never actually thrown.
+   * @throws IOException Never actually thrown.
+   */
+  public static String getFilename(int series, int image, IFormatReader r,
+      String pattern, boolean padded) throws FormatException, IOException
+  {
+     MetadataStore store = r.getMetadataStore();
+     MetadataRetrieve retrieve = store instanceof MetadataRetrieve ?
+       (MetadataRetrieve) store : new DummyMetadata();
+     return getFilename(series, image, retrieve, pattern, padded);
+  }
+
+  public static String getFilename(int series, int image, MetadataRetrieve retrieve,
+      String pattern, boolean padded) throws FormatException, IOException
+  {
+    String sPlaces = "%d";
+    if (padded) {
+      sPlaces = "%0" + String.valueOf(retrieve.getImageCount()).length() + "d";
+    }
+    String filename = pattern.replaceAll(SERIES_NUM, String.format(sPlaces, series));
 
     String imageName = retrieve.getImageName(series);
     if (imageName == null) imageName = "Series" + series;
@@ -1034,12 +1122,23 @@ public final class FormatTools {
 
     filename = filename.replaceAll(SERIES_NAME, imageName);
 
-    r.setSeries(series);
-    int[] coordinates = r.getZCTCoords(image);
+    DimensionOrder order = retrieve.getPixelsDimensionOrder(series);
+    int sizeC = retrieve.getChannelCount(series);
+    int sizeT = retrieve.getPixelsSizeT(series).getValue();
+    int sizeZ = retrieve.getPixelsSizeZ(series).getValue();
+    int[] coordinates = FormatTools.getZCTCoords(order.getValue(), sizeZ, sizeC, sizeT, sizeZ*sizeC*sizeT, image);
 
-    filename = filename.replaceAll(Z_NUM, String.valueOf(coordinates[0]));
-    filename = filename.replaceAll(T_NUM, String.valueOf(coordinates[2]));
-    filename = filename.replaceAll(CHANNEL_NUM, String.valueOf(coordinates[1]));
+    String zPlaces = "%d";
+    String tPlaces = "%d";
+    String cPlaces = "%d";
+    if (padded) {
+      zPlaces = "%0" + String.valueOf(sizeZ).length() + "d";
+      tPlaces = "%0" + String.valueOf(sizeT).length() + "d";
+      cPlaces = "%0" + String.valueOf(sizeC).length() + "d";
+    }
+    filename = filename.replaceAll(Z_NUM, String.format(zPlaces, coordinates[0]));
+    filename = filename.replaceAll(T_NUM, String.format(tPlaces, coordinates[2]));
+    filename = filename.replaceAll(CHANNEL_NUM, String.format(cPlaces, coordinates[1]));
 
     String channelName = retrieve.getChannelName(series, coordinates[1]);
     if (channelName == null) channelName = String.valueOf(coordinates[1]);
@@ -1056,7 +1155,7 @@ public final class FormatTools {
       if (retrieve.getPlaneCount(series) > image) {
         Time deltaT = retrieve.getPlaneDeltaT(series, image);
         if (deltaT != null) {
-          stamp = (long) (deltaT.value(UNITS.S).doubleValue() * 1000);
+          stamp = (long) (deltaT.value(UNITS.SECOND).doubleValue() * 1000);
         }
       }
       stamp += DateTools.getTime(date, DateTools.ISO8601_FORMAT);
@@ -1216,7 +1315,10 @@ public final class FormatTools {
       r.setVar("thumbSizeX", reader.getThumbSizeX());
       r.setVar("thumbSizeY", reader.getThumbSizeY());
       r.setVar("little", reader.isLittleEndian());
-      r.exec("img = AWTImageTools.openImage(plane, reader, sizeX, sizeY)");
+
+      // always normalize floating point images, otherwise scaling will fail
+      r.setVar("normal", true);
+      r.exec("img = AWTImageTools.openImage(plane, reader, sizeX, sizeY, normal)");
       r.exec("img = AWTImageTools.makeUnsigned(img)");
       r.exec("thumb = AWTImageTools.scale(img, thumbSizeX, thumbSizeY, false)");
       bytes = (byte[][]) r.exec("AWTImageTools.getPixelBytes(thumb, little)");
@@ -1228,7 +1330,7 @@ public final class FormatTools {
     if (bytes.length == 1) return bytes[0];
     int rgbChannelCount = reader.getRGBChannelCount();
     byte[] rtn = new byte[rgbChannelCount * bytes[0].length];
-    
+
     if (!reader.isInterleaved()) {
       for (int i=0; i<rgbChannelCount; i++) {
         System.arraycopy(bytes[i], 0, rtn, bytes[0].length * i, bytes[i].length);
@@ -1237,7 +1339,7 @@ public final class FormatTools {
     else {
       int bpp = FormatTools.getBytesPerPixel(reader.getPixelType());
 
-      for (int i=0; i<bytes[0].length/bpp; i+=bpp) {
+      for (int i=0; i<bytes[0].length; i+=bpp) {
         for (int j=0; j<rgbChannelCount; j++) {
           System.arraycopy(bytes[j], i, rtn, (i * rgbChannelCount) + j * bpp, bpp);
         }
@@ -1392,7 +1494,17 @@ public final class FormatTools {
       value < Double.POSITIVE_INFINITY);
   }
 
-  public static Length getPhysicalSize(Double value, String unit) {
+  /**
+   * Formats the input value for the wavelength into a length of the
+   * given unit.
+   *
+   * @param value  the value of the wavelength
+   * @param unit   the unit of the wavelength. If null will default to Nanometre
+   *
+   * @return       the wavelength formatted as a {@link Length}
+
+   */
+  public static Length getWavelength(Double value, String unit) {
     if (unit != null) {
       try {
         UnitsLength ul = UnitsLength.fromString(unit);
@@ -1400,7 +1512,116 @@ public final class FormatTools {
       } catch (EnumerationException e) {
       }
     }
-    return new Length(value, UNITS.MICROM);
+    return new Length(value, UNITS.NANOMETER);
+  }
+  
+  /**
+   * Formats the input value for the time into a length of the
+   * given unit.
+   *
+   * @param value  the value of the time
+   * @param unit   the unit of the time. If null will default to Seconds
+   *
+   * @return       the wavelength formatted as a {@link Length}
+
+   */
+  public static Time getTime(Double value, String unit) {
+    if (unit != null) {
+      try {
+        UnitsTime ut = UnitsTime.fromString(unit);
+        return UnitsTime.create(value, ut);
+      } catch (EnumerationException e) {
+      }
+    }
+    return new Time(value, UNITS.SECOND);
+  }
+
+
+  /**
+   * Formats the input value for the stage position into a length of the given
+   * unit.
+   *
+   * @param value  the value of the stage position
+   * @param unit   the unit of the stage position
+   *
+   * @return       the stage position formatted as a {@link Length}. Returns
+   *               {@code null} if {@code value} is {@code null} or infinite
+   *               or {@code unit} is {@code null}.
+   */
+  public static Length getStagePosition(Double value, Unit<Length> unit) {
+    if (value == null || value.isNaN() || value.isInfinite()) {
+      LOGGER.debug("Expected float value for stage position; got {}", value);
+      return null;
+    }
+
+    if (unit == null) {
+      LOGGER.debug("Expected valid unit for stage position; got {}", unit);
+      return null;
+    }
+
+    return new Length(value, unit);
+  }
+
+  /**
+   * Formats the input value for the stage position into a length of the given
+   * unit.
+   *
+   * @param value  the value of the stage position
+   * @param unit   the unit of the stage position. If the string cannot be
+   *               converted into a base length unit, the stage position length
+   *               will be constructure using the default reference frame unit.
+   *
+   * @return       the stage position formatted as a {@link Length}. Returns
+   *               {@code null} under the same conditions as
+   *               {@link #getStagePosition(Double, String)}.
+   */
+  public static Length getStagePosition(Double value, String unit) {
+      Unit<Length> baseunit = null;
+      try {
+        baseunit = UnitsLengthEnumHandler.getBaseUnit(
+          UnitsLength.fromString(unit));
+      } catch (EnumerationException e) {
+        LOGGER.warn("Invalid base unit: using default reference frame unit");
+        LOGGER.debug(e.getMessage());
+        baseunit = UNITS.REFERENCEFRAME;
+      }
+      return getStagePosition(value, baseunit);
+  }
+
+  public static Length getPhysicalSize(Double value, String unit) {
+    if (value != null && value != 0 && value < Double.POSITIVE_INFINITY) {
+      if (unit != null) {
+        try {
+          UnitsLength ul = UnitsLength.fromString(unit);
+          int ordinal = ul.ordinal();
+          Length returnLength = UnitsLength.create(value, ul);
+  
+          if (returnLength.value().doubleValue() > Constants.EPSILON && returnLength.value().doubleValue() < Double.POSITIVE_INFINITY) {
+            return returnLength;
+          }
+          
+          // If the requested unit produces a value less than Constants.EPSILON then we switch to the next smallest unit possible
+          // Using UnitsLength.values().length - 2 as a boundary so as not to include Pixel and Reference Frame as convertible units
+          while (returnLength.value().doubleValue() < Constants.EPSILON && ordinal < (UnitsLength.values().length - 3)) { 
+            ordinal++;
+            ul = UnitsLength.values()[ordinal];
+            Length tempLength = UnitsLength.create(0, ul);
+            returnLength = UnitsLength.create(returnLength.value(tempLength.unit()), ul);
+          }
+          if (returnLength.value().doubleValue() > Constants.EPSILON && returnLength.value().doubleValue() < Double.POSITIVE_INFINITY) {
+            return returnLength;
+          }
+          else {
+            LOGGER.debug("Expected positive value for PhysicalSize; got {}", value);
+            return null;
+          }
+        } catch (EnumerationException e) {
+        }
+      }
+      return new Length(value, UNITS.MICROMETER);
+    }
+    LOGGER.debug("Expected positive value for PhysicalSize; got {}", value);
+    return null;
   }
 
   /**
@@ -1412,7 +1633,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeX(Double value) {
-   return getPhysicalSizeX(value, UNITS.MICROM);
+   return getPhysicalSizeX(value, UNITS.MICROMETER);
   }
   
   /**
@@ -1426,13 +1647,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeX(Double value, String unit) {
-    if (isPositiveValue(value))
-    {
       return getPhysicalSize(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeX; got {}", value);
-      return null;
-    }
   }
 
   /**
@@ -1445,13 +1660,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeX(Double value, Unit<Length> unit) {
-    if (isPositiveValue(value))
-    {
-      return createLength(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeX; got {}", value);
-      return null;
-    }
+      return getPhysicalSize(value, unit.getSymbol());
   }
 
   /**
@@ -1463,7 +1672,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeY(Double value) {
-    return getPhysicalSizeY(value, UNITS.MICROM);
+    return getPhysicalSizeY(value, UNITS.MICROMETER);
   }
 
   /**
@@ -1477,13 +1686,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeY(Double value, String unit) {
-    if (isPositiveValue(value))
-    {
       return getPhysicalSize(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeY; got {}", value);
-      return null;
-    }
   }
 
   /**
@@ -1496,25 +1699,19 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeY(Double value, Unit<Length> unit) {
-    if (isPositiveValue(value))
-    {
-      return createLength(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeY; got {}", value);
-      return null;
-    }
+      return getPhysicalSize(value, unit.getSymbol());
   }
 
   /**
    * Formats the input value for the physical size in Z into a length in
-   * microns
+   * microns.
    *
    * @param value  the value of the physical size in Z in microns
    *
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeZ(Double value) {
-    return getPhysicalSizeZ(value, UNITS.MICROM);
+    return getPhysicalSizeZ(value, UNITS.MICROMETER);
   }
 
   /**
@@ -1528,13 +1725,7 @@ public final class FormatTools {
    * @return       the physical size formatted as a {@link Length}
    */
   public static Length getPhysicalSizeZ(Double value, String unit) {
-    if (isPositiveValue(value))
-    {
       return getPhysicalSize(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeZ; got {}", value);
-      return null;
-    }
   }
 
   /**
@@ -1545,23 +1736,16 @@ public final class FormatTools {
    * @param unit   the unit of the physical size in Z
    *
    * @return       the physical size formatted as a {@link Length}
-
    */
   public static Length getPhysicalSizeZ(Double value, Unit<Length> unit) {
-    if (isPositiveValue(value))
-    {
-      return createLength(value, unit);
-    } else {
-      LOGGER.debug("Expected positive value for PhysicalSizeZ; got {}", value);
-      return null;
-    }
+      return getPhysicalSize(value, unit.getSymbol());
   }
 
   public static Length getEmissionWavelength(Double value) {
     if (value != null && value - Constants.EPSILON > 0 &&
       value < Double.POSITIVE_INFINITY)
     {
-      return createLength(new PositiveFloat(value), UNITS.NM);
+      return createLength(new PositiveFloat(value), UNITS.NANOMETER);
     }
     LOGGER.debug("Expected positive value for EmissionWavelength; got {}",
       value);
@@ -1572,7 +1756,7 @@ public final class FormatTools {
     if (value != null && value - Constants.EPSILON > 0 &&
       value < Double.POSITIVE_INFINITY)
     {
-      return createLength(new PositiveFloat(value), UNITS.NM);
+      return createLength(new PositiveFloat(value), UNITS.NANOMETER);
     }
     LOGGER.debug("Expected positive value for ExcitationWavelength; got {}",
       value);
@@ -1581,7 +1765,7 @@ public final class FormatTools {
 
   public static Length getWavelength(Double value) {
     if (value != null && value > 0) {
-      return new Length(value, UNITS.NM);
+      return new Length(value, UNITS.NANOMETER);
     }
     LOGGER.debug("Expected positive value for Wavelength; got {}", value);
     return null;
@@ -1598,7 +1782,7 @@ public final class FormatTools {
 
   public static Length getCutIn(Double value) {
     if (value != null && value > 0) {
-      return new Length(value, UNITS.NM);
+      return new Length(value, UNITS.NANOMETER);
     }
     LOGGER.debug("Expected positive value for CutIn; got {}", value);
     return null;
@@ -1606,7 +1790,7 @@ public final class FormatTools {
 
   public static Length getCutOut(Double value) {
     if (value != null && value > 0) {
-      return new Length(value, UNITS.NM);
+      return new Length(value, UNITS.NANOMETER);
     }
     LOGGER.debug("Expected positive value for CutOut; got {}", value);
     return null;
@@ -1614,7 +1798,7 @@ public final class FormatTools {
 
   public static Length getFontSize(Integer value) {
     if (value != null && value >= 0) {
-      return new Length(value, UNITS.PT);
+      return new Length(value, UNITS.POINT);
     }
     LOGGER.debug("Expected non-negative value for FontSize; got {}", value);
     return null;
@@ -1798,4 +1982,98 @@ public final class FormatTools {
     return new Time(value.getNumberValue(), valueUnit);
   }
 
+  /**
+   * Parse a length composed of a value and an optional unit
+   *
+   * @param s                a string composed of a positive value and
+   *                         an optional length unit
+   *
+   * @return                 a {@link Length} object or {@code null} if the
+   *                         string cannot be parsed
+   */
+  public static Length parseLength(String s) {
+    return parseLength(s, null);
+  }
+
+  /**
+   * Parse a length composed of a value and an optional unit
+   *
+   * @param s                a string composed of a positive value and
+                             an optional length unit
+   * @param defaultUnit      a default unit to use if not present in the string
+   *
+   * @return                 a {@link Length} object or {@code null} if the
+   *                         string cannot be parsed
+   */
+  public static Length parseLength(String s, String defaultUnit) {
+      Matcher m = Pattern.compile("\\s*([-e\\d.]+)\\s*([^\\d\\s].*?)?\\s*").matcher(s);
+      if (!m.matches()) {
+        LOGGER.warn("{} does not match a length", s);
+        return null;
+      }
+      Double value = DataTools.parseDouble(m.group(1));
+      if (value == null || value == Double.POSITIVE_INFINITY ||
+          value == Double.NEGATIVE_INFINITY) {
+        LOGGER.warn("{} is not a valid length value", m.group(1));
+        return null;
+      }
+      String unit = m.group(2);
+      if (unit == null || unit.trim().length() == 0) {
+        unit = defaultUnit;
+      }
+
+      Unit<Length> l = null;
+      try {
+        l = UnitsLengthEnumHandler.getBaseUnit(UnitsLength.fromString(unit));
+      } catch (EnumerationException e) {
+        LOGGER.warn("{} does not match a length unit!", unit);
+        return null;
+      }
+      return createLength(value, l);
+  }
+
+  /**
+   * Returns the maximum number of directories below the common parent of a
+   * list of file paths
+   *
+   * @param files            a string array containing a list of file paths
+   *
+   * @return                 the maximum number of directories under the common
+   *                         parent 
+   */
+  public static int getRequiredDirectories(String[] files)
+  {
+    if (files == null || files.length == 0) return 0;
+    final StringBuilder commonParent = new StringBuilder();
+
+    int dirCount = 0;
+
+    String[] dirs = files[0].split(File.separatorChar == '/' ? "/" : "\\\\");
+    for (String dir : dirs) {
+      boolean canAppend = true;
+      for (String f : files) {
+        if (!f.startsWith(commonParent.toString() + dir)) {
+          canAppend = false;
+          break;
+        }
+      }
+
+      if (canAppend) {
+        commonParent.append(dir);
+        commonParent.append(File.separator);
+        dirCount++;
+      }
+    }
+
+    int maxDirCount = 0;
+    for (String f : files) {
+      int parentDirCount =
+              f.split(File.separatorChar == '/' ? "/" : "\\\\").length - 1;
+      if (parentDirCount > maxDirCount) {
+        maxDirCount = parentDirCount;
+      }
+    }
+
+    return (int) Math.max(maxDirCount - dirCount, 0);
+  }
 }

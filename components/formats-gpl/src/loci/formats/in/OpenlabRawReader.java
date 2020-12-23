@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -146,13 +146,12 @@ public class OpenlabRawReader extends FormatReader {
     in.skipBytes(1);
 
     long stampMs = in.readLong();
+    String stamp = null;
     if (stampMs > 0) {
       stampMs /= 1000000;
       stampMs -= (67 * 365.25 * 24 * 60 * 60);
+      stamp = DateTools.convertDate(stampMs, DateTools.UNIX);
     }
-    else stampMs = System.currentTimeMillis();
-
-    String stamp = DateTools.convertDate(stampMs, DateTools.UNIX);
 
     in.skipBytes(4);
     int len = in.read() & 0xff;

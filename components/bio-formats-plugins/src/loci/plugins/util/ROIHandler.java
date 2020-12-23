@@ -4,7 +4,7 @@
  * Bio-Formats Importer, Bio-Formats Exporter, Bio-Formats Macro Extensions,
  * Data Browser and Stack Slicer.
  * %%
- * Copyright (C) 2006 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2006 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -30,6 +30,7 @@ package loci.plugins.util;
 import ij.IJ;
 import ij.ImagePlus;
 import ij.Prefs;
+import ij.WindowManager;
 import ij.gui.EllipseRoi;
 import ij.gui.Line;
 import ij.gui.OvalRoi;
@@ -51,6 +52,7 @@ import loci.formats.MetadataTools;
 import loci.formats.meta.IMetadata;
 import loci.formats.meta.MetadataStore;
 import loci.formats.ome.OMEXMLMetadata;
+import loci.plugins.in.ImporterOptions;
 import ome.units.quantity.Length;
 import ome.units.UNITS;
 import ome.xml.model.Ellipse;
@@ -94,6 +96,20 @@ public class ROIHandler {
    */
   public static void openROIs(IMetadata retrieve, ImagePlus[] images,
           boolean isOMERO) {
+    openROIs(retrieve, images, isOMERO, ImporterOptions.ROIS_MODE_MANAGER);  
+  }
+  
+  /**
+   * Opens the rois and converts them into ImageJ Rois.
+   *
+   * @param retrieve The OMEXML store.
+   * @param images The imageJ object.
+   * @param isOMERO <code>true</code> if data stored in OMERO,
+   *        <code>false</code> otherwise.
+   * @param roisMode Determines whether to import Rois to overlay or RoiManager
+   */
+  public static void openROIs(IMetadata retrieve, ImagePlus[] images,
+          boolean isOMERO, String roisMode) {
     if (!(retrieve instanceof OMEXMLMetadata)) return;
     int nextRoi = 0;
     RoiManager manager = RoiManager.getInstance();
@@ -107,24 +123,25 @@ public class ROIHandler {
     int imageCount = images.length;
     for (int imageNum=0; imageNum<imageCount; imageNum++) {
       int roiCount = root.sizeOfROIList();
-      if (roiCount > 0 && manager == null) {
+      if (roiCount > 0 && manager == null
+    		  && roisMode.equals(ImporterOptions.ROIS_MODE_MANAGER)) {
         manager = new RoiManager();
       }
 
-      for (int roiNum=0; roiNum<roiCount; roiNum++) {
+      for (int roiNum = 0; roiNum < roiCount; roiNum++) {
         Union shapeSet = root.getROI(roiNum).getUnion();
         int shapeCount = shapeSet.sizeOfShapeList();
 
-        for (int shape=0; shape<shapeCount; shape++) {
+        for (int shape = 0; shape<shapeCount; shape++) {
           Shape shapeObject = shapeSet.getShape(shape);
 
           roi = null;
           sw = null;
           sc = null;
           fc = null;
-          int c= 0;
-          int z= 0;
-          int t= 0;
+          int c = 0;
+          int z = 0;
+          int t = 0;
 
           if (shapeObject instanceof Ellipse) {
             Ellipse ellipse = (Ellipse) shapeObject;
@@ -389,14 +406,25 @@ public class ROIHandler {
             }
             if (sw != null) {
               if (sw == 0) {
-                sw= (float) 1;
+                sw = (float) 1;
               }
               roi.setStrokeWidth(sw);
             }
             if (sc != null) {
               roi.setStrokeColor(sc);
             }
-            manager.add(images[imageNum], roi, nextRoi++);
+            
+            if (roisMode.equals(ImporterOptions.ROIS_MODE_MANAGER)) {
+                manager.add(images[imageNum], roi, nextRoi++);
+            } else if (roisMode.equals(ImporterOptions.ROIS_MODE_OVERLAY)) {
+                Overlay overlay = images[imageNum].getOverlay();                        
+                if (overlay == null) {
+                    overlay = new Overlay(roi);
+                    images[imageNum].setOverlay(overlay);
+                } else {
+                    overlay.add(roi);
+                }
+            }
           }
         }
       }
@@ -405,7 +433,6 @@ public class ROIHandler {
         manager.runCommand("show all with labels");
       }
     }
-
   }
 
   /**
@@ -452,7 +479,8 @@ public class ROIHandler {
     int roicount = root.sizeOfROIList();
     int cntr = roicount;
 
-    for (int i=0; i<rois.length; i++) {
+    ImagePlus imp = WindowManager.getCurrentImage();
+    for (int i = 0; i < rois.length; i++) {
 
       String polylineID = MetadataTools.createLSID("Shape", cntr, 0);
       roiID = MetadataTools.createLSID("ROI", cntr, 0);
@@ -460,7 +488,25 @@ public class ROIHandler {
       int c = ijRoi.getCPosition()-1;
       int z = ijRoi.getZPosition()-1;
       int t = ijRoi.getTPosition()-1;
-      if (ijRoi.isDrawingTool()){//Checks if the given roi is a Text box/Arrow/Rounded Rectangle
+      ImagePlus image = WindowManager.getImage(ijRoi.getImageID());
+      if (image == null) {
+        image = imp; //pick the current image in that case
+      }
+      int pos = ijRoi.getPosition();
+      if (imp != null) {
+        if (imp.getNChannels() == 1 && imp.getNSlices() == 1) {
+          t = pos-1;
+        } else if (imp.getNChannels() == 1 && imp.getNFrames() == 1) {
+          z = pos-1;
+        } else if (imp.getNSlices() == 1 && imp.getNFrames() == 1) {
+          c = pos-1;
+        }
+        if (t > imp.getNFrames()-1 || c > imp.getNChannels() -1 ||
+           z > imp.getNSlices()-1) {
+          continue;//
+        }
+      }
+      if (ijRoi.isDrawingTool()) {//Checks if the given roi is a Text box/Arrow/Rounded Rectangle
         if (ijRoi.getTypeAsString().matches("Text")) {
           if (ijRoi instanceof TextRoi){
             store.setLabelID(polylineID, cntr, 0);
@@ -903,7 +949,7 @@ public class ROIHandler {
 
     for (int q=0; q<pointList.length; q++) {
       pointList[q] = pointList[q].trim();
-      int delim = pointList[q].indexOf(",");
+      int delim = pointList[q].indexOf(',');
       coordinates[0][q] =
           (int) Double.parseDouble(pointList[q].substring(0, delim));
       coordinates[1][q] =

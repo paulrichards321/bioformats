@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -45,7 +45,7 @@ public class TiffDumper {
   public static void dumpIFDs(String path) throws IOException {
     RandomAccessInputStream in = new RandomAccessInputStream(path);
     TiffParser parser = new TiffParser(in);
-    IFDList ifdList = parser.getIFDs();
+    IFDList ifdList = parser.getMainIFDs();
     for (IFD ifd : ifdList) {
       for (Integer key : ifd.keySet()) {
         int k = key.intValue();

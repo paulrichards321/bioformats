@@ -2,7 +2,7 @@
  * #%L
  * OME Bio-Formats package for reading and converting biological file formats.
  * %%
- * Copyright (C) 2005 - 2015 Open Microscopy Environment:
+ * Copyright (C) 2005 - 2017 Open Microscopy Environment:
  *   - Board of Regents of the University of Wisconsin-Madison
  *   - Glencoe Software, Inc.
  *   - University of Dundee
@@ -39,8 +39,6 @@ import loci.formats.meta.MetadataStore;
 import loci.formats.tiff.IFD;
 import loci.formats.tiff.TiffParser;
 
-import ome.xml.model.primitives.PositiveFloat;
-import ome.xml.model.primitives.PositiveInteger;
 import ome.xml.model.primitives.Timestamp;
 
 import ome.units.quantity.ElectricPotential;
@@ -104,7 +102,7 @@ public class NikonElementsTiffReader extends BaseTiffReader {
     if (xml.length() == 0) {
       xml = ifds.get(0).getIFDTextValue(NIKON_XML_TAG_2).trim();
     }
-    int open = xml.indexOf("<");
+    int open = xml.indexOf('<');
     if (open >= 0) {
       xml = xml.substring(open);
     }
@@ -164,7 +162,7 @@ public class NikonElementsTiffReader extends BaseTiffReader {
     for (int i=0; i<getImageCount(); i++) {
       int c = getZCTCoords(i)[1];
       if (c < exposureTimes.size() && exposureTimes.get(c) != null) {
-        store.setPlaneExposureTime(new Time(exposureTimes.get(c), UNITS.S), 0, i);
+        store.setPlaneExposureTime(new Time(exposureTimes.get(c), UNITS.SECOND), 0, i);
       }
 
       if (i < posX.size()) {
@@ -181,7 +179,7 @@ public class NikonElementsTiffReader extends BaseTiffReader {
     String detector = MetadataTools.createLSID("Detector", 0, 0);
     store.setDetectorID(detector, 0, 0);
     store.setDetectorModel(handler.getCameraModel(), 0, 0);
-    store.setDetectorType(getDetectorType("Other"), 0, 0);
+    store.setDetectorType(MetadataTools.getDetectorType("Other"), 0, 0);
 
     ArrayList<String> channelNames = handler.getChannelNames();
     ArrayList<String> modality = handler.getModalities();
@@ -197,14 +195,14 @@ public class NikonElementsTiffReader extends BaseTiffReader {
 
     for (int c=0; c<getEffectiveSizeC(); c++) {
       if (pinholeSize != null) {
-        store.setChannelPinholeSize(new Length(pinholeSize, UNITS.MICROM), 0, c);
+        store.setChannelPinholeSize(new Length(pinholeSize, UNITS.MICROMETER), 0, c);
       }
       if (c < channelNames.size()) {
         store.setChannelName(channelNames.get(c), 0, c);
       }
       if (c < modality.size()) {
         store.setChannelAcquisitionMode(
-          getAcquisitionMode(modality.get(c)), 0, c);
+          MetadataTools.getAcquisitionMode(modality.get(c)), 0, c);
       }
       if (c < emWave.size()) {
         Length em = FormatTools.getEmissionWavelength(emWave.get(c));
@@ -219,27 +217,27 @@ public class NikonElementsTiffReader extends BaseTiffReader {
         }
       }
       if (c < binning.size()) {
-        store.setDetectorSettingsBinning(getBinning(binning.get(c)), 0, c);
+        store.setDetectorSettingsBinning(MetadataTools.getBinning(binning.get(c)), 0, c);
       }
       if (c < gain.size()) {
         store.setDetectorSettingsGain(gain.get(c), 0, c);
       }
       if (c < speed.size()) {
         store.setDetectorSettingsReadOutRate(
-                new Frequency(speed.get(c), UNITS.HZ), 0, c);
+                new Frequency(speed.get(c), UNITS.HERTZ), 0, c);
       }
       store.setDetectorSettingsID(detector, 0, c);
     }
 
     if (temperature.size() > 0) {
       store.setImagingEnvironmentTemperature(new Temperature(
-              temperature.get(0), UNITS.DEGREEC), 0);
+              temperature.get(0), UNITS.CELSIUS), 0);
     }
 
     Double voltage = handler.getVoltage();
     if (voltage != null) {
       store.setDetectorSettingsVoltage(
-              new ElectricPotential(voltage, UNITS.V), 0, 0);
+              new ElectricPotential(voltage, UNITS.VOLT), 0, 0);
     }
 
     Double na = handler.getNumericalAperture();
@@ -252,11 +250,11 @@ public class NikonElementsTiffReader extends BaseTiffReader {
 
     String immersion = handler.getImmersion();
     if (immersion == null) immersion = "Other";
-    store.setObjectiveImmersion(getImmersion(immersion), 0, 0);
+    store.setObjectiveImmersion(MetadataTools.getImmersion(immersion), 0, 0);
 
     String correction = handler.getCorrection();
     if (correction == null || correction.length() == 0) correction = "Other";
-    store.setObjectiveCorrection(getCorrection(correction), 0, 0);
+    store.setObjectiveCorrection(MetadataTools.getCorrection(correction), 0, 0);
 
     String objective = MetadataTools.createLSID("Objective", 0, 0);
     store.setObjectiveID(objective, 0, 0);
